@@ -1,7 +1,6 @@
-python-telegram-bot==20.7
+python-telegram-bot==21.9
 requests
 pytz
 timezonefinder
-# opsiyonel: ağır paketler, gerek yoksa sil
 matplotlib
 numpy
