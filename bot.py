@@ -79,7 +79,7 @@ def premium_until(user_id: int) -> datetime | None:
 
 def is_premium(user_id: int) -> bool:
     until = premium_until(user_id)
-    return bool(until and until > datetime.now(timezone.utc)) or user_id == BOT_ADMIN_ID
+    return bool(until and until > datetime.now(timezone.utc))
 
 def grant_premium(user_id: int, until: datetime, charge_id: str, stars: int, recurring: bool):
     with store.tx("bot") as conn:
@@ -349,11 +349,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("🚨 Alerts", callback_data='alerts_main')],
         [InlineKeyboardButton("📬 Subscribe", callback_data='subscribe_start'),
          InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
-        [InlineKeyboardButton("⭐ Premium", callback_data='premium')],
+        [InlineKeyboardButton(f"⭐ Get Premium — {PREMIUM_STARS} Stars/month", callback_data='premium')],
     ]
+    uid = update.effective_user.id
+    plan = "⭐ Premium" if is_premium(uid) else "Free (see /plans)"
     await update.message.reply_text(
-        f"👋 Welcome, *{update.effective_user.first_name}*!\n\nSend any city name or use the menu:",
+        f"👋 Welcome, *{update.effective_user.first_name}*!\n\n"
+        "Send any city name for the weather, or use the menu.\n\n"
+        f"Your plan: *{plan}*",
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+PLANS_TEXT = (
+    "💳 *SkyMate plans*\n\n"
+    "*Free*\n"
+    "• Current weather with real station measurements\n"
+    "• 5-day and 24-hour forecasts, warnings, UV, air quality, maps\n"
+    "• Daily morning report for 1 city\n"
+    f"• Up to {FREE_FAVORITES} favorite cities, {FREE_HISTORY_DAYS} days of history\n\n"
+    "*⭐ Premium* — {price} Stars per month\n"
+    "• Everything in Free\n"
+    "• 🚨 Severe-weather warnings pushed to you automatically\n"
+    "• 📅 10-day forecasts\n"
+    "• 📈 Up to a year of measured history per chart\n"
+    "• ❤️ Unlimited favorites\n"
+    "• 💻 Premium in the SkyMate desktop app\n\n"
+    "Cancel anytime in Telegram: Settings → My Stars."
+)
+
+
+async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    text = PLANS_TEXT.replace("{price}", str(PREMIUM_STARS))
+    if is_premium(uid):
+        await update.message.reply_markdown(text + f"\n\n✅ You're Premium until {premium_until(uid):%d %b %Y}.")
+        return
+    await update.message.reply_markdown(text, reply_markup=InlineKeyboardMarkup(
+        [[InlineKeyboardButton(f"⭐ Get Premium — {PREMIUM_STARS} Stars/month", callback_data='premium')]]))
 
 async def location_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_kb = [[KeyboardButton("📍 Share Location", request_location=True)]]
@@ -381,7 +413,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/units — Toggle °C / °F\n"
         "/settings — Preferences\n"
         "/location — Share your location (phone only)\n"
-        "/premium — ⭐ SkyMate Premium\n"
+        "/plans — Free vs ⭐ Premium\n"
+        "/premium — ⭐ Get Premium\n"
         "/app — Desktop app key\n"
         "/paysupport — Payment help\n\n"
         "Or just type any city name.")
@@ -910,8 +943,6 @@ async def premium_maintenance(context: ContextTypes.DEFAULT_TYPE):
     now = int(datetime.now(timezone.utc).timestamp())
     with store.tx("bot") as conn:
         premium_users = {r[0] for r in conn.execute("SELECT user_id FROM premium WHERE until > ?", (now,))}
-        if BOT_ADMIN_ID:
-            premium_users.add(BOT_ADMIN_ID)
         subs = conn.execute("SELECT user_id, chat_id, city, units FROM user_subscriptions").fetchall()
         app_rows = conn.execute("SELECT user_id, plan FROM app_keys").fetchall()
     for uid, plan in app_rows:
@@ -1006,6 +1037,7 @@ BOT_COMMANDS = [
     ("hourly", "Next 24 hours"), ("alerts", "Weather warnings"), ("stations", "Nearby measuring stations"),
     ("history", "Measured history chart"), ("aqi", "Air quality"), ("uv", "UV index"), ("radar", "Weather map"),
     ("favorites", "Saved cities"), ("subscribe", "Daily report"), ("premium", "⭐ SkyMate Premium"),
+    ("plans", "Free vs Premium"),
     ("app", "Desktop app key"), ("settings", "Units and subscription"), ("paysupport", "Payment help"),
     ("help", "All commands"),
 ]
@@ -1059,7 +1091,7 @@ def build_app():
                      ("aqi", aqi_command), ("uv", uv_command), ("alerts", alerts_command),
                      ("radar", radar_command), ("history", history_command), ("stations", stations_command),
                      ("favorites", favorites_command),
-                     ("subscribe", subscribe_command), ("cancel", cancel), ("premium", premium_command),
+                     ("subscribe", subscribe_command), ("cancel", cancel), ("premium", premium_command), ("plans", plans_command),
                      ("paysupport", paysupport_command), ("app", app_command), ("refund", refund_command),
                      ("premiumstats", premiumstats_command)]:
         app.add_handler(CommandHandler(name, fn))
