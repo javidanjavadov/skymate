@@ -88,6 +88,8 @@ def init():
     conn = connect()
     conn.executescript(SCHEMA)
     conn.commit()
+    from . import store
+    store.init("api")
 
 
 def mark_source(source: str, ok: bool, error: str | None = None):

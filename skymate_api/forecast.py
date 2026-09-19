@@ -6,12 +6,14 @@ from functools import lru_cache
 import numpy as np
 import pytz
 
-from . import geo, grids, physics, providers
+from . import geo, grids, observations, physics, providers
 from .config import MODELS
 
 STALE_HOURS = 18
 ATTRIBUTION = ("Forecast data derived from NOAA GFS (public domain) and ECMWF open data (CC-BY-4.0). "
                "Place names from GeoNames (CC-BY 4.0).")
+OBS_ATTRIBUTION = ("Measurements from airport (METAR) and national weather service (WMO SYNOP) stations, "
+                   "via NOAA and Ogimet; historical records from NOAA ISD.")
 
 
 class NotFound(Exception):
@@ -136,12 +138,37 @@ def _sun(loc: dict, day_local: datetime):
 
 # ─── Public builders ─────────────────────────────────────────────────────────
 
+OBS_RADIUS_KM = 40
+OBS_MAX_AGE_HOURS = 3
+
+
+def observed(loc: dict) -> dict | None:
+    """Nearest real measurement, if a station is close enough and reported recently."""
+    try:
+        hits = observations.nearby(loc["lat"], loc["lon"], OBS_RADIUS_KM, 1, OBS_MAX_AGE_HOURS)
+    except Exception:
+        return None
+    if not hits:
+        return None
+    h = hits[0]
+    return {**h["observation"], "station": h["station"]}
+
+
 def current(loc: dict, model=None) -> dict:
-    s = series_for(loc["lat"], loc["lon"], model)
+    """Model estimate for the exact location, plus the nearest real measurement when one exists."""
     now = datetime.now(timezone.utc).replace(microsecond=0)
+    obs = observed(loc)
+    try:
+        s = series_for(loc["lat"], loc["lon"], model)
+    except NoData:
+        if not obs:
+            raise
+        return {"location": loc, "current": None, "observed": obs,
+                "sun": _sun(loc, now.astimezone(pytz.timezone(loc["timezone"]))),
+                "meta": {"source": "measured", "attribution": OBS_ATTRIBUTION}}
     state = _state(loc["lat"], loc["lon"], now, _at(s, now))
     local_today = now.astimezone(pytz.timezone(loc["timezone"]))
-    return {"location": loc, "current": state, "sun": _sun(loc, local_today), "meta": meta(s)}
+    return {"location": loc, "current": state, "observed": obs, "sun": _sun(loc, local_today), "meta": meta(s)}
 
 
 def hourly(loc: dict, hours: int = 24, model=None) -> dict:
@@ -239,6 +266,8 @@ def alerts(loc: dict, hours: int = 72, model=None) -> dict:
 
 def uv(loc: dict, model=None) -> dict:
     c = current(loc, model)
+    if c["current"] is None:
+        raise NoData("UV estimate needs forecast data, which is unavailable right now")
     d = daily(loc, 1, model)
     uv_now = c["current"]["uv_index"]
     uv_max = max(uv_now, d["daily"][0]["uv_max"]) if d["daily"] else uv_now
@@ -290,8 +319,12 @@ def status() -> dict:
                          "covers_until": run.times[-1].isoformat(), "runs_stored": len(runs)}
         else:
             models[m] = {"latest_run": None}
-    hist = sorted(p.stem for p in grids.HISTORY_DIR.glob("*.npz"))
-    return {"models": models,
+    hist = sorted(p.stem for p in grids.HISTORY_DIR.glob("*.npz") if ".tmp" not in p.name)
+    try:
+        obs = observations.stats()
+    except Exception:
+        obs = None
+    return {"models": models, "observations": obs,
             "history": {"slices": len(hist), "from": hist[0] if hist else None, "to": hist[-1] if hist else None},
             "offline_ready_until": max((v["covers_until"] for v in models.values() if v.get("covers_until")),
                                        default=None)}

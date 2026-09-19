@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: skymate
+    runtime: python
+    plan: free
+    region: frankfurt
+    repo: https://github.com/javidanjavadov/skymate
+    branch: main
+    buildCommand: pip install -r requirements-server.txt
+    startCommand: uvicorn skymate_api.server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        fromDatabase:
+          name: skymate-db
+          property: connectionString
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: WEATHER_TOKEN
+        sync: false
+      - key: SKYMATE_API_KEY
+        generateValue: true
+      - key: SKYMATE_ADMIN_TOKEN
+        generateValue: true
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: BOT_MODE
+        value: webhook
+      - key: BOT_ADMIN_ID
+        value: "1173970613"
+      - key: SKYMATE_MODELS
+        value: gfs
+      - key: SKYMATE_DOWNLOAD_WORKERS
+        value: "2"
+      - key: SKYMATE_RUNS_TO_KEEP
+        value: "1"
+      - key: SKYMATE_OBS_BACKFILL
+        value: "0"
+
+databases:
+  - name: skymate-db
+    plan: free
+    region: frankfurt
+    databaseName: skymate
+    user: skymate

@@ -7,6 +7,4 @@ requests
 matplotlib
 pytz
 timezonefinder
-customtkinter
-Pillow
 psycopg[binary]

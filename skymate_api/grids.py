@@ -145,7 +145,7 @@ def cleanup(model: str):
     for p in base.glob("*.partial"):
         if time.time() - p.stat().st_mtime > 36 * 3600:
             shutil.rmtree(p, ignore_errors=True)
-    cutoff = run_id(datetime.now(timezone.utc) - timedelta(days=HISTORY_DAYS))
+    cutoff = run_id(datetime.now(timezone.utc) - timedelta(days=HISTORY_DAYS)) if HISTORY_DAYS > 0 else ""
     for f in HISTORY_DIR.glob("*.npz"):
         if ".tmp" in f.name and time.time() - f.stat().st_mtime > 3600:
             f.unlink(missing_ok=True)

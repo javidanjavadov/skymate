@@ -5,3 +5,8 @@ __pycache__/
 *.pyc
 favorites.json
 *.db
+build/
+dist/
+*.spec
+*.db-shm
+*.db-wal

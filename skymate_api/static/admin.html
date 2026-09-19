@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkyMate Admin</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #6b7280; --line: #e5e7eb;
+  --accent: #0b84d8; --accent-soft: #e6f3fc; --good: #16a34a; --warn: #d97706; --bad: #dc2626;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1115; --panel: #171a21; --text: #e8eaf0; --muted: #9aa3b2; --line: #262b36;
+          --accent: #4fb3f6; --accent-soft: #14283a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
+header h1 { font-size: 17px; margin: 0; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button { background: none; border: 0; padding: 7px 12px; border-radius: 7px; color: var(--muted); cursor: pointer; font: inherit; }
+nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+main { padding: 20px; max-width: 1280px; margin: 0 auto; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.card .k { color: var(--muted); font-size: 12px; }
+.card .v { font-size: 24px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.card .s { color: var(--muted); font-size: 12px; margin-top: 2px; }
+h2 { font-size: 15px; margin: 24px 0 10px; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--panel); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: 0; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; background: var(--line); color: var(--muted); }
+.pill.good { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
+.pill.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.pill.bad { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
+.pill.acc { background: var(--accent-soft); color: var(--accent); }
+button.b, select, input { font: inherit; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+button.b { cursor: pointer; }
+button.b.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.b.danger { color: var(--bad); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.chart { display: flex; align-items: flex-end; gap: 3px; height: 90px; padding: 12px 14px 6px; }
+.chart div { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; position: relative; }
+.chart div:hover::after { content: attr(data-t); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 2px 6px; border-radius: 4px; font-size: 11px; white-space: nowrap; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.charts .card { padding: 12px 0 4px; }
+.charts .k { padding: 0 14px; }
+#login { max-width: 360px; margin: 12vh auto; }
+#login .card { padding: 24px; }
+#login input { width: 100%; margin: 12px 0; }
+.muted { color: var(--muted); }
+.key { font-family: ui-monospace, Consolas, monospace; background: var(--accent-soft); padding: 8px 10px; border-radius: 7px; word-break: break-all; }
+#toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; display: none; }
+.hidden { display: none !important; }
+@media (max-width: 600px) { main { padding: 12px; } header { padding: 10px 12px; } }
+</style>
+</head>
+<body>
+<div id="login">
+  <div class="card">
+    <h1 style="margin:0 0 4px;font-size:18px">SkyMate Admin</h1>
+    <div class="muted">Enter your admin token (SKYMATE_ADMIN_TOKEN in .env).</div>
+    <form onsubmit="event.preventDefault(); login();">
+      <input id="tok" type="password" placeholder="Admin token" autocomplete="current-password">
+      <button class="b primary" type="submit">Sign in</button>
+    </form>
+    <div id="lerr" style="color:var(--bad);margin-top:8px"></div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1>🌤 SkyMate Admin</h1>
+    <nav id="nav">
+      <button data-v="overview" class="on">Overview</button>
+      <button data-v="users">Users</button>
+      <button data-v="payments">Payments</button>
+      <button data-v="keys">API keys</button>
+      <button data-v="data">Data</button>
+    </nav>
+    <span style="flex:1"></span>
+    <button class="b" onclick="logout()">Sign out</button>
+  </header>
+  <main>
+    <section id="v-overview"></section>
+    <section id="v-users" class="hidden">
+      <div class="row"><input id="usearch" placeholder="Search name, @username or ID" oninput="debounce(loadUsers)"><span class="muted" id="ucount"></span></div>
+      <div class="box"><table id="utable"></table></div>
+      <div id="udetail"></div>
+    </section>
+    <section id="v-payments" class="hidden"><div class="box"><table id="ptable"></table></div></section>
+    <section id="v-keys" class="hidden">
+      <div class="card" style="margin-bottom:16px">
+        <b>New API customer</b>
+        <div class="row" style="margin:10px 0 0">
+          <input id="kname" placeholder="Customer name">
+          <select id="kplan"></select>
+          <button class="b primary" onclick="createKey()">Create key</button>
+        </div>
+        <div id="newkey"></div>
+      </div>
+      <div class="row"><label><input type="checkbox" id="showapp" onchange="loadKeys()"> Show desktop-app user keys</label></div>
+      <div class="box"><table id="ktable"></table></div>
+    </section>
+    <section id="v-data" class="hidden"></section>
+  </main>
+</div>
+<div id="toast"></div>
+
+<script>
+let TOKEN = sessionStorage.getItem("sm_admin") || "";
+let PLANS = {};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const num = (n) => (n ?? 0).toLocaleString();
+const date = (s) => s ? new Date(s.includes("T") ? s : s.replace(" ", "T") + "Z").toLocaleString() : "—";
+const ago = (s) => { if (!s) return "—"; const m = (Date.now() - new Date(s.replace(" ", "T") + "Z")) / 60000;
+  return m < 60 ? Math.round(m) + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago"; };
+let dt; function debounce(fn) { clearTimeout(dt); dt = setTimeout(fn, 250); }
+function toast(t) { const e = $("toast"); e.textContent = t; e.style.display = "block"; setTimeout(() => e.style.display = "none", 2500); }
+
+async function call(path, method = "GET") {
+  const r = await fetch("/admin/api" + path, { method, headers: { "X-Admin-Token": TOKEN } });
+  const body = await r.json().catch(() => ({}));
+  if (r.status === 401) { logout(); throw new Error("Session expired"); }
+  if (!r.ok) throw new Error(body.error?.message || r.statusText);
+  return body;
+}
+
+async function login() {
+  TOKEN = $("tok").value.trim();
+  try { await call("/overview"); sessionStorage.setItem("sm_admin", TOKEN); start(); }
+  catch (e) { $("lerr").textContent = "Wrong token."; TOKEN = ""; }
+}
+function logout() { sessionStorage.removeItem("sm_admin"); TOKEN = ""; $("app").classList.add("hidden"); $("login").classList.remove("hidden"); }
+
+$("nav").onclick = (e) => { const v = e.target.dataset.v; if (!v) return; show(v); };
+function show(v) {
+  document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.v === v));
+  document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "v-" + v));
+  ({ overview: loadOverview, users: loadUsers, payments: loadPayments, keys: loadKeys, data: loadData })[v]();
+}
+
+function card(k, v, s = "") { return `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`; }
+function chart(title, rows, field) {
+  const max = Math.max(1, ...rows.map((r) => r[field] || 0));
+  const bars = rows.length ? rows.map((r) => `<div style="height:${Math.max(2, (r[field] || 0) / max * 100)}%" data-t="${esc(r.day)}: ${num(r[field])}"></div>`).join("")
+    : `<span class="muted" style="align-self:center">No data yet</span>`;
+  return `<div class="card"><div class="k">${title} (last 30 days)</div><div class="chart">${bars}</div></div>`;
+}
+
+async function loadOverview() {
+  const d = await call("/overview");
+  const b = d.bot, a = d.api;
+  $("v-overview").innerHTML = `
+    <h2 style="margin-top:0">Telegram bot</h2>
+    <div class="grid">
+      ${card("Users", num(b.users), `${num(b.new_7d)} new this week`)}
+      ${card("Active (24 h / 7 d)", `${num(b.active_24h)} / ${num(b.active_7d)}`)}
+      ${card("Premium subscribers", num(b.premium_active), `${d.premium_price_stars} ⭐ / month`)}
+      ${card("Stars (30 days)", num(b.stars_30d) + " ⭐", `${num(b.payments_30d)} payments · ≈ $${(b.stars_30d * 0.013).toFixed(2)} payout`)}
+      ${card("Stars all time", num(b.stars_total) + " ⭐")}
+      ${card("Daily reports / app keys", `${num(b.daily_subscriptions)} / ${num(b.app_keys)}`)}
+    </div>
+    <h2>API business</h2>
+    <div class="grid">
+      ${card("Paying & free customers", num(a.customer_keys_active), Object.entries(a.by_plan).filter(([p, n]) => n && !p.startsWith("app") && p !== "premium").map(([p, n]) => `${p}: ${n}`).join(" · ") || "none yet")}
+      ${card("Monthly revenue (list)", "$" + num(a.mrr_usd), "sum of active customer plans")}
+      ${card("Requests today", num(a.requests_today))}
+      ${card("Requests (30 days)", num(a.requests_30d))}
+    </div>
+    <div class="charts">${chart("New users", d.series.signups, "users")}${chart("Stars earned", d.series.stars, "stars")}${chart("API requests", d.series.requests, "requests")}</div>`;
+}
+
+async function loadUsers() {
+  const d = await call("/users?limit=300&search=" + encodeURIComponent($("usearch").value));
+  $("ucount").textContent = `${num(d.total)} users total`;
+  $("utable").innerHTML = `<tr><th>User</th><th>ID</th><th>Plan</th><th>Premium until</th><th class="num">Paid ⭐</th><th>Daily report</th><th class="num">Favs</th><th>App</th><th>Lang</th><th>Joined</th><th>Last seen</th><th class="num">Actions</th><th></th></tr>` +
+    d.users.map((u) => `<tr>
+      <td>${esc([u.first_name, u.last_name].filter(Boolean).join(" ") || "—")} ${u.username ? `<span class="muted">@${esc(u.username)}</span>` : ""}</td>
+      <td class="muted">${u.user_id}</td>
+      <td>${u.premium ? '<span class="pill good">Premium</span>' : '<span class="pill">Free</span>'}</td>
+      <td>${u.premium ? date(u.premium_until) : "—"}</td>
+      <td class="num">${num(u.stars_paid)}</td>
+      <td>${esc(u.daily_city || "—")}</td>
+      <td class="num">${u.favorites}</td>
+      <td>${u.app_plan ? `<span class="pill acc">${esc(u.app_plan)}</span>` : "—"}</td>
+      <td>${esc(u.language || "")}</td>
+      <td>${u.first_seen ? date(u.first_seen) : "—"}</td>
+      <td>${ago(u.last_seen)}</td>
+      <td class="num">${num(u.actions)}</td>
+      <td><button class="b" onclick="userDetail(${u.user_id})">Details</button>
+          ${u.premium ? `<button class="b danger" onclick="removePremium(${u.user_id})">Remove Premium</button>`
+                      : `<button class="b" onclick="grantPremium(${u.user_id})">Give Premium</button>`}</td></tr>`).join("");
+}
+async function userDetail(uid) {
+  const d = await call("/users/" + uid);
+  $("udetail").innerHTML = `<div class="card" style="margin-top:16px"><b>User ${uid}</b>
+    <p>Favorites: ${d.favorites.map(esc).join(", ") || "none"}</p>
+    <p>Daily report: ${d.subscription ? esc(d.subscription.city) + " (" + d.subscription.units + ")" : "none"}</p>
+    <p>Payments: ${d.payments.length ? d.payments.map((p) => `${date(p.created_at)} · ${p.stars} ⭐${p.refunded ? " (refunded)" : ""}`).join("<br>") : "none"}</p></div>`;
+  $("udetail").scrollIntoView({ behavior: "smooth" });
+}
+async function grantPremium(uid) {
+  const days = prompt("Give Premium for how many days?", "30"); if (!days) return;
+  await call(`/users/${uid}/premium?days=${parseInt(days)}`, "POST"); toast("Premium granted"); loadUsers();
+}
+async function removePremium(uid) {
+  if (!confirm("Remove Premium from this user now? (No refund is made.)")) return;
+  await call(`/users/${uid}/premium/remove`, "POST"); toast("Premium removed"); loadUsers();
+}
+
+async function loadPayments() {
+  const d = await call("/payments");
+  $("ptable").innerHTML = `<tr><th>Date</th><th>User</th><th class="num">Stars</th><th>Premium until</th><th>Type</th><th>Status</th><th>Charge ID</th><th></th></tr>` +
+    (d.payments.length ? d.payments.map((p) => `<tr>
+      <td>${date(p.created_at)}</td>
+      <td>${esc(p.first_name || "")} ${p.username ? `<span class="muted">@${esc(p.username)}</span>` : ""} <span class="muted">${p.user_id}</span></td>
+      <td class="num">${num(p.stars)}</td><td>${date(p.until)}</td>
+      <td>${p.manual ? '<span class="pill">Manual</span>' : '<span class="pill acc">Stars</span>'}</td>
+      <td>${p.refunded ? '<span class="pill bad">Refunded</span>' : '<span class="pill good">Paid</span>'}</td>
+      <td class="muted" style="font-size:12px">${esc(p.charge_id)}</td>
+      <td>${p.refunded ? "" : `<button class="b danger" onclick="refund('${esc(p.charge_id)}')">Refund</button>`}</td></tr>`).join("")
+      : `<tr><td colspan="8" class="muted">No payments yet.</td></tr>`);
+}
+async function refund(id) {
+  if (!confirm("Refund this payment to the user and remove their Premium? This cannot be undone.")) return;
+  try { await call(`/payments/${encodeURIComponent(id)}/refund`, "POST"); toast("Refunded"); loadPayments(); }
+  catch (e) { alert(e.message); }
+}
+
+async function loadKeys() {
+  const d = await call("/keys"); PLANS = d.plans;
+  $("kplan").innerHTML = Object.entries(PLANS).filter(([p]) => !["internal", "app_free", "premium"].includes(p))
+    .map(([p, v]) => `<option value="${p}">${p} — $${v.price_usd_month}/mo</option>`).join("");
+  const keys = d.keys.filter((k) => $("showapp").checked || k.kind !== "app user");
+  $("ktable").innerHTML = `<tr><th>ID</th><th>Name</th><th>Type</th><th>Key</th><th>Plan</th><th>Status</th><th class="num">Today</th><th class="num">30 days</th><th>Created</th><th></th></tr>` +
+    keys.map((k) => `<tr>
+      <td class="muted">${k.id}</td><td>${esc(k.name)}</td><td><span class="pill">${k.kind}</span></td>
+      <td class="muted">${esc(k.key_prefix)}…</td>
+      <td><select onchange="setPlan(${k.id}, this.value)">${Object.keys(PLANS).map((p) => `<option ${p === k.plan ? "selected" : ""}>${p}</option>`).join("")}</select></td>
+      <td>${k.active ? '<span class="pill good">Active</span>' : '<span class="pill bad">Revoked</span>'}</td>
+      <td class="num">${num(k.requests_today)}</td><td class="num">${num(k.requests_30d)}</td><td>${date(k.created_at)}</td>
+      <td>${k.plan === "internal" ? "" : `<button class="b ${k.active ? "danger" : ""}" onclick="setActive(${k.id}, ${!k.active})">${k.active ? "Revoke" : "Re-activate"}</button>`}</td></tr>`).join("");
+}
+async function createKey() {
+  const name = $("kname").value.trim(); if (!name) return alert("Enter the customer's name");
+  const d = await call(`/keys?name=${encodeURIComponent(name)}&plan=${$("kplan").value}`, "POST");
+  $("newkey").innerHTML = `<p>Send this key to <b>${esc(name)}</b>. It is shown only once:</p><div class="key">${esc(d.api_key)}</div>`;
+  $("kname").value = ""; loadKeys();
+}
+async function setPlan(id, plan) { await call(`/keys/${id}/plan?plan=${plan}`, "POST"); toast("Plan changed"); }
+async function setActive(id, active) {
+  if (!active && !confirm("Revoke this key? The customer's requests will stop working.")) return;
+  await call(`/keys/${id}/active?active=${active}`, "POST"); loadKeys();
+}
+
+async function loadData() {
+  const d = await call("/data"); const s = d.status; const o = s.observations || {};
+  const models = Object.entries(s.models).map(([m, v]) => card(m.toUpperCase() + " forecast",
+    v.latest_run ? `${v.age_hours} h old` : "not yet", v.latest_run ? `run ${date(v.latest_run)} · covers until ${date(v.covers_until)}` : "downloading…")).join("");
+  $("v-data").innerHTML = `
+    <div class="grid">${models}
+      ${card("Offline-ready until", s.offline_ready_until ? date(s.offline_ready_until) : "—", "forecasts stored locally")}
+      ${card("Measured readings", num(o.readings), `${num(o.stations)} stations · ${o.database_mb} MB`)}
+      ${card("Oldest measurement", o.oldest_reading ? new Date(o.oldest_reading).getFullYear() : "—", "latest live: " + ago((o.latest_live_reading || "").replace("+00:00", "").replace("T", " ")))}
+      ${card("Grid history slices", num(s.history.slices), s.history.from ? `from ${s.history.from}` : "")}
+    </div>
+    <h2>Data sources</h2>
+    <div class="box"><table><tr><th>Source</th><th>Last success</th><th>Last error</th></tr>
+      ${d.sources.map((x) => `<tr><td>${esc(x.source)}</td><td>${ago(x.last_ok)}</td>
+        <td class="${x.last_error_at && (!x.last_ok || x.last_error_at > x.last_ok) ? "" : "muted"}" style="white-space:normal">${x.last_error ? esc(x.last_error.slice(0, 140)) + " · " + ago(x.last_error_at) : "—"}</td></tr>`).join("")}
+    </table></div>
+    <h2>Forecast downloads</h2>
+    <div class="box"><table><tr><th>Model</th><th>Run</th><th>Status</th><th>Finished</th><th>Note</th></tr>
+      ${d.runs.map((r) => `<tr><td>${r.model}</td><td>${r.run}</td><td><span class="pill ${r.status === "complete" ? "good" : r.status === "partial" ? "warn" : ""}">${r.status}</span></td><td>${r.finished_at ? ago(r.finished_at) : "—"}</td><td class="muted">${esc(r.error || "")}</td></tr>`).join("")}
+    </table></div>`;
+}
+
+function start() { $("login").classList.add("hidden"); $("app").classList.remove("hidden"); show("overview"); }
+if (TOKEN) call("/overview").then(start).catch(() => {});
+</script>
+</body>
+</html>

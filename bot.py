@@ -2,7 +2,6 @@ import asyncio
 import io
 import logging
 import os
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import matplotlib
@@ -11,23 +10,42 @@ import matplotlib.pyplot as plt
 import pytz
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, InputTextMessageContent,
-    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update,
+    KeyboardButton, LabeledPrice, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update,
 )
 from telegram.ext import (
     ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler,
-    InlineQueryHandler, MessageHandler, filters,
+    InlineQueryHandler, MessageHandler, PreCheckoutQueryHandler, TypeHandler, filters,
 )
 
-from skymate_client import SkyMate, SkyMateError
+from skymate_api import store
+from skymate_api.config import load_env
+from skymate_client import SkyMate, SkyMateAdmin, SkyMateError
 
+load_env()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-DB_PATH = 'bot_data.db'
+BOT_ADMIN_ID = int(os.environ.get("BOT_ADMIN_ID", "0") or 0)
+PREMIUM_STARS = int(os.environ.get("PREMIUM_STARS", "150"))
+SUPPORT_CONTACT = os.environ.get("SUPPORT_CONTACT", "")
+APP_DOWNLOAD_URL = os.environ.get("APP_DOWNLOAD_URL", "")
+PUBLIC_API_URL = os.environ.get("PUBLIC_API_URL", "")
 DEFAULT_UNITS = 'metric'
+FREE_FAVORITES = 3
+FREE_HISTORY_DAYS = 7
 api = SkyMate()
+admin_api = SkyMateAdmin()
+
+PREMIUM_BENEFITS = (
+    "⭐ *SkyMate Premium*\n\n"
+    "• 🚨 Instant severe-weather warnings for your city\n"
+    "• 📅 10-day forecasts (/week)\n"
+    "• 📈 Up to a full year of measured history per chart, archive back to 1932\n"
+    "• ❤️ Unlimited favorite cities (free: 3)\n"
+    "• 💻 Premium in the SkyMate desktop app (/app)\n"
+)
 
 WEATHER_EMOJIS = {
     'Clear': '☀️', 'Clouds': '☁️', 'Rain': '🌧️', 'Drizzle': '🌦️', 'Thunderstorm': '⛈️',
@@ -47,49 +65,75 @@ STATE_ADD_FAVORITE, STATE_REMOVE_FAVORITE = range(2)
 # ─── Database (per-user settings) ─────────────────────────────────────────────
 
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER PRIMARY KEY, units TEXT DEFAULT 'metric')")
-        conn.execute("CREATE TABLE IF NOT EXISTS user_favorites (user_id INTEGER, city TEXT, PRIMARY KEY (user_id, city))")
-        conn.execute("CREATE TABLE IF NOT EXISTS user_subscriptions "
-                     "(user_id INTEGER PRIMARY KEY, chat_id INTEGER, city TEXT, units TEXT)")
+    store.init("bot")
+    with store.tx("bot") as conn:
+        # Users known from earlier activity, before the users table existed.
+        conn.execute("INSERT INTO users(user_id, actions) SELECT user_id, 0 FROM (SELECT user_id FROM user_settings "
+                     "UNION SELECT user_id FROM user_favorites UNION SELECT user_id FROM user_subscriptions) AS known "
+                     "WHERE 1=1 ON CONFLICT DO NOTHING")
+
+def premium_until(user_id: int) -> datetime | None:
+    with store.tx("bot") as conn:
+        row = conn.execute('SELECT until FROM premium WHERE user_id=?', (user_id,)).fetchone()
+    return datetime.fromtimestamp(row[0], tz=timezone.utc) if row and row[0] else None
+
+def is_premium(user_id: int) -> bool:
+    until = premium_until(user_id)
+    return bool(until and until > datetime.now(timezone.utc)) or user_id == BOT_ADMIN_ID
+
+def grant_premium(user_id: int, until: datetime, charge_id: str, stars: int, recurring: bool):
+    with store.tx("bot") as conn:
+        conn.execute('INSERT INTO premium(user_id, until, charge_id, recurring, updated_at) VALUES (?,?,?,?,?) '
+                     'ON CONFLICT(user_id) DO UPDATE SET until=excluded.until, charge_id=excluded.charge_id, '
+                     'recurring=excluded.recurring, updated_at=excluded.updated_at',
+                     (user_id, int(until.timestamp()), charge_id, 1 if recurring else 0, store.now()))
+        conn.execute('INSERT INTO payments(charge_id, user_id, stars, until, created_at) VALUES (?,?,?,?,?) '
+                     'ON CONFLICT DO NOTHING', (charge_id, user_id, stars, int(until.timestamp()), store.now()))
+
+def has_app_key(user_id: int) -> bool:
+    with store.tx("bot") as conn:
+        return conn.execute('SELECT 1 FROM app_keys WHERE user_id=?', (user_id,)).fetchone() is not None
 
 def get_user_units(user_id: int) -> str:
-    with sqlite3.connect(DB_PATH) as conn:
+    with store.tx("bot") as conn:
         row = conn.execute('SELECT units FROM user_settings WHERE user_id=?', (user_id,)).fetchone()
     return row[0] if row else DEFAULT_UNITS
 
 def set_user_units(user_id: int, units: str):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute('INSERT OR REPLACE INTO user_settings VALUES (?,?)', (user_id, units))
+    with store.tx("bot") as conn:
+        conn.execute('INSERT INTO user_settings(user_id, units) VALUES (?,?) '
+                     'ON CONFLICT(user_id) DO UPDATE SET units=excluded.units', (user_id, units))
 
 def get_user_favorites(user_id: int) -> list:
-    with sqlite3.connect(DB_PATH) as conn:
-        rows = conn.execute('SELECT city FROM user_favorites WHERE user_id=? ORDER BY rowid', (user_id,)).fetchall()
+    with store.tx("bot") as conn:
+        rows = conn.execute('SELECT city FROM user_favorites WHERE user_id=? ORDER BY city', (user_id,)).fetchall()
     return [r[0] for r in rows]
 
 def add_user_favorite(user_id: int, city: str):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute('INSERT OR IGNORE INTO user_favorites VALUES (?,?)', (user_id, city))
+    with store.tx("bot") as conn:
+        conn.execute('INSERT INTO user_favorites(user_id, city) VALUES (?,?) ON CONFLICT DO NOTHING', (user_id, city))
 
 def remove_user_favorite(user_id: int, city: str):
-    with sqlite3.connect(DB_PATH) as conn:
+    with store.tx("bot") as conn:
         conn.execute('DELETE FROM user_favorites WHERE user_id=? AND city=?', (user_id, city))
 
 def get_subscription(user_id: int):
-    with sqlite3.connect(DB_PATH) as conn:
+    with store.tx("bot") as conn:
         row = conn.execute('SELECT chat_id, city, units FROM user_subscriptions WHERE user_id=?', (user_id,)).fetchone()
     return {'chat_id': row[0], 'city': row[1], 'units': row[2]} if row else None
 
 def get_all_subscriptions():
-    with sqlite3.connect(DB_PATH) as conn:
+    with store.tx("bot") as conn:
         return conn.execute('SELECT user_id, chat_id, city, units FROM user_subscriptions').fetchall()
 
 def save_subscription(user_id: int, chat_id: int, city: str, units: str):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute('INSERT OR REPLACE INTO user_subscriptions VALUES (?,?,?,?)', (user_id, chat_id, city, units))
+    with store.tx("bot") as conn:
+        conn.execute('INSERT INTO user_subscriptions(user_id, chat_id, city, units) VALUES (?,?,?,?) '
+                     'ON CONFLICT(user_id) DO UPDATE SET chat_id=excluded.chat_id, city=excluded.city, '
+                     'units=excluded.units', (user_id, chat_id, city, units))
 
 def delete_subscription(user_id: int):
-    with sqlite3.connect(DB_PATH) as conn:
+    with store.tx("bot") as conn:
         conn.execute('DELETE FROM user_subscriptions WHERE user_id=?', (user_id,))
 
 
@@ -139,8 +183,28 @@ def _freshness(meta: dict) -> str:
         return f"\n\n⚠️ _Offline mode: forecast issued {round(meta['data_age_hours'])} h ago_"
     return ""
 
+def _age(minutes: int) -> str:
+    return f"{minutes} min ago" if minutes < 90 else f"{round(minutes / 60)} h ago"
+
+def format_measured(o: dict, u: dict) -> str:
+    st = o["station"]
+    t, s = u["temperature"], u["speed"]
+    parts = [f"🌡 *{_num(o['temperature'], 1)}{t}*"]
+    if o.get("humidity") is not None:
+        parts.append(f"💧 {_num(o['humidity'])}%")
+    if o.get("wind_speed") is not None:
+        parts.append(f"💨 {_num(o['wind_speed'], 1)} {s} {_compass(o.get('wind_direction'))}".rstrip())
+    if o.get("pressure") is not None:
+        parts.append(f"🔵 {_num(o['pressure'])} hPa")
+    wx = f"\n   Weather: {o['weather']}" if o.get("weather") else ""
+    return (f"📡 *Measured* at {st['name']} ({st['distance_km']} km away, {_age(o['age_minutes'])})\n"
+            f"   {'  '.join(parts)}{wx}")
+
 def format_current(d: dict) -> str:
     loc, c, u = d["location"], d["current"], d["units"]
+    obs = d.get("observed")
+    if c is None:
+        return f"📍 *{_place(loc)}*\n\n" + format_measured(obs, u)
     t, s = u["temperature"], u["speed"]
     vis = c.get("visibility")
     vis_txt = (f"{vis / 1000:.0f} km" if u["visibility"] == "m" else f"{vis:.1f} mi") if vis is not None else None
@@ -159,6 +223,22 @@ def format_current(d: dict) -> str:
     sun = d.get("sun", {})
     if sun.get("sunrise") and sun.get("sunset"):
         lines.append(f"🌅 Sunrise: {_local(sun['sunrise'], loc):%H:%M}  🌇 Sunset: {_local(sun['sunset'], loc):%H:%M}")
+    if obs:
+        m = " _(measured)_"
+        if obs.get("temperature") is not None:
+            lines[2] = f"🌡 Temp: *{_num(obs['temperature'])}{t}*{m}"
+        if obs.get("humidity") is not None:
+            lines[4] = f"💧 Humidity: {_num(obs['humidity'])}%{m}"
+        if obs.get("wind_speed") is not None:
+            ogust = f" (gusts {_num(obs['wind_gust'])})" if obs.get("wind_gust") else ""
+            lines[5] = f"💨 Wind: {_num(obs['wind_speed'], 1)} {s} {_compass(obs.get('wind_direction'))}{ogust}{m}"
+        if obs.get("pressure") is not None:
+            lines[6] = f"🔵 Pressure: {_num(obs['pressure'])} hPa{m}"
+        st = obs["station"]
+        lines.append(f"\n📡 Measured at *{st['name']}* ({st['distance_km']} km, {_age(obs['age_minutes'])}). "
+                     "Other values are estimates.")
+    else:
+        lines.append("\n_No weather station nearby: values are model estimates._")
     return "\n".join(l for l in lines if l) + _freshness(d["meta"])
 
 def format_daily(d: dict) -> str:
@@ -269,6 +349,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("🚨 Alerts", callback_data='alerts_main')],
         [InlineKeyboardButton("📬 Subscribe", callback_data='subscribe_start'),
          InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
+        [InlineKeyboardButton("⭐ Premium", callback_data='premium')],
     ]
     await update.message.reply_text(
         f"👋 Welcome, *{update.effective_user.first_name}*!\n\nSend any city name or use the menu:",
@@ -291,14 +372,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/uv `<city>` — UV index\n"
         "/alerts `<city>` — Weather warnings\n"
         "/radar `<city>` — Weather map\n"
-        "/history `<city>` — Last 7 days chart\n"
+        "/history `<city> [days]` — Measured history chart\n"
+        "/stations `<city>` — Nearby measuring stations\n"
         "/favorites — Saved locations\n"
         "/addfavorite — Add a location\n"
         "/removefavorite — Remove a location\n"
         "/subscribe — Daily 8 AM updates\n"
         "/units — Toggle °C / °F\n"
         "/settings — Preferences\n"
-        "/location — Share your location (phone only)\n\n"
+        "/location — Share your location (phone only)\n"
+        "/premium — ⭐ SkyMate Premium\n"
+        "/app — Desktop app key\n"
+        "/paysupport — Payment help\n\n"
         "Or just type any city name.")
 
 async def units_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -352,6 +437,9 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _simple(update, context, "/forecast", api.daily, format_daily, days=5, units=get_user_units(update.effective_user.id))
 
 async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_premium(update.effective_user.id):
+        await update.message.reply_text(PREMIUM_ONLY)
+        return
     await _simple(update, context, "/week", api.daily, format_daily, days=10, units=get_user_units(update.effective_user.id))
 
 async def hourly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -382,35 +470,89 @@ async def radar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await send_map(update.message, city=city)
 
-async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    city = city_arg(context)
-    if not city:
-        await update.message.reply_text("Usage: /history <city>")
-        return
-    units = get_user_units(update.effective_user.id)
-    try:
-        d = await call(api.history, q=city, days=7, units=units)
-    except SkyMateError as e:
-        await update.message.reply_markdown(error_text(e, f"*{city}*"))
-        return
-    pts = [(_local(p["time"], d["location"]), p["temperature"]) for p in d["history"] if p["temperature"] is not None]
-    if len(pts) < 2:
-        await update.message.reply_text("❌ Not enough historical data yet.")
-        return
-    times, temps = zip(*pts)
+def _chart(times, temps, unit: str, title: str) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.plot(times, temps, color='#4fc3f7', linewidth=1.8, marker='o', ms=2)
     ax.fill_between(times, temps, min(temps), alpha=0.2, color='#4fc3f7')
     fig.autofmt_xdate()
-    ax.set_ylabel(f"Temperature ({d['units']['temperature']})")
-    ax.set_title(f"Last 7 days — {_place(d['location'])}")
+    ax.set_ylabel(f"Temperature ({unit})")
+    ax.set_title(title)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=120)
     plt.close(fig)
     buf.seek(0)
-    await update.message.reply_photo(photo=buf, caption=f"📈 Last 7 days — {_place(d['location'])}")
+    return buf
+
+
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/history <city> [days] — measured station readings; model history only if no station exists."""
+    args = context.args or []
+    days = 7
+    if args and args[-1].isdigit():
+        days = max(1, min(366, int(args.pop())))
+    city = ' '.join(args).strip()
+    if not city:
+        await update.message.reply_text("Usage: /history <city> [days, up to 366]")
+        return
+    if days > FREE_HISTORY_DAYS and not is_premium(update.effective_user.id):
+        await update.message.reply_text(f"Free plan shows the last {FREE_HISTORY_DAYS} days. {PREMIUM_ONLY}")
+        return
+    units = get_user_units(update.effective_user.id)
+    try:
+        d = await call(api.observation_history, q=city, days=days, units=units)
+        st = d["station"]
+        pts = [(datetime.fromisoformat(o["time"]), o["temperature"]) for o in d["observations"]
+               if o["temperature"] is not None]
+        label = f"Measured at {st['name']}"
+        cov = d["coverage"]
+        note = f"\nThis station's archive: {cov['readings']:,} readings since {cov['from'][:4]}" if cov["from"] else ""
+    except SkyMateError as e:
+        if e.status != 404:
+            await update.message.reply_markdown(error_text(e, f"*{city}*"))
+            return
+        try:
+            d = await call(api.history, q=city, days=min(days, 90), units=units)
+        except SkyMateError as e2:
+            await update.message.reply_markdown(error_text(e2, f"*{city}*"))
+            return
+        pts = [(datetime.fromisoformat(p["time"]), p["temperature"]) for p in d["history"] if p["temperature"] is not None]
+        label, note = "Model estimate (no station nearby)", ""
+    if len(pts) < 2:
+        await update.message.reply_text("❌ Not enough data for that period yet.")
+        return
+    times, temps = zip(*pts)
+    unit = "°F" if units == "imperial" else "°C"
+    title = f"Last {days} days — {label}"
+    await update.message.reply_photo(
+        photo=_chart(times, temps, unit, title),
+        caption=f"📈 {title}\nMin {min(temps):.1f}{unit} · Max {max(temps):.1f}{unit} · {len(temps)} readings{note}")
+
+
+async def stations_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    city = city_arg(context)
+    if not city:
+        await update.message.reply_text("Usage: /stations <city>")
+        return
+    units = get_user_units(update.effective_user.id)
+    try:
+        d = await call(api.observations_latest, q=city, radius_km=100, limit=8, units=units)
+    except SkyMateError as e:
+        await update.message.reply_markdown(error_text(e, f"*{city}*"))
+        return
+    if not d["stations"]:
+        await update.message.reply_markdown(f"No weather stations reported near *{_place(d['location'])}* in the last 3 hours.")
+        return
+    u = {"temperature": "°F" if units == "imperial" else "°C", "speed": "mph" if units == "imperial" else "m/s"}
+    msg = f"📡 *Measuring stations near {_place(d['location'])}*\n\n"
+    for h in d["stations"]:
+        st, o = h["station"], h["observation"]
+        kind = "✈️" if st["kind"] == "airport" else "🏛"
+        msg += (f"{kind} *{st['name']}* — {st['distance_km']} km\n"
+                f"   {_num(o['temperature'], 1)}{u['temperature']}, wind {_num(o.get('wind_speed'), 1)} {u['speed']}, "
+                f"{_age(o['age_minutes'])}\n")
+    await update.message.reply_markdown(msg + "\n✈️ airport  🏛 national weather service")
 
 
 # ─── Favorites ────────────────────────────────────────────────────────────────
@@ -432,6 +574,9 @@ async def add_favorite_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return STATE_ADD_FAVORITE
 
 async def _add_favorite(message, uid: int, raw: str):
+    if len(get_user_favorites(uid)) >= FREE_FAVORITES and not is_premium(uid):
+        await message.reply_text(f"Free plan saves up to {FREE_FAVORITES} favorites. {PREMIUM_ONLY}")
+        return
     try:
         hits = await call(api.geocode, raw, 1)
     except SkyMateError as e:
@@ -523,6 +668,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if d.startswith('savefav:'):
         name = d.split(':', 1)[1]
+        if len(get_user_favorites(uid)) >= FREE_FAVORITES and not is_premium(uid) and name not in get_user_favorites(uid):
+            await query.answer(f"Free plan saves up to {FREE_FAVORITES} favorites. See /premium", show_alert=True)
+            return
         add_user_favorite(uid, name)
         await query.answer(f"❤️ {name} saved!", show_alert=True)
         return
@@ -568,6 +716,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         i = int(d.split(':')[1])
         if i < len(favs):
             await reply_weather(query.message, uid, city=favs[i], edit_query=query)
+    elif d == 'premium':
+        await send_premium_offer(query.message, uid, context.bot)
     elif d == 'forecast_main':
         context.user_data['awaiting'] = 'forecast'
         await query.message.reply_text("🏙️ Send a city name for the forecast:")
@@ -614,6 +764,181 @@ async def _detail_button(query, uid: int, d: str):
     except SkyMateError as e:
         text = error_text(e)
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=back)
+
+
+# ─── Premium (Telegram Stars) ─────────────────────────────────────────────────
+
+PREMIUM_ONLY = "⭐ This is a Premium feature. See /premium"
+
+
+async def send_premium_offer(message, uid: int, bot):
+    until = premium_until(uid)
+    if is_premium(uid) and until:
+        await message.reply_markdown(
+            PREMIUM_BENEFITS + f"\n✅ You're Premium until *{until:%d %b %Y}*.\n"
+            "Manage or cancel the subscription in Telegram: Settings → My Stars.")
+        return
+    link = await bot.create_invoice_link(
+        title="SkyMate Premium",
+        description="Severe-weather warnings, 10-day forecasts, full measured history, unlimited favorites "
+                    "and Premium in the desktop app. Renews every 30 days; cancel anytime.",
+        payload=f"premium:{uid}", provider_token="", currency="XTR",
+        prices=[LabeledPrice("Premium (30 days)", PREMIUM_STARS)],
+        subscription_period=30 * 24 * 3600)
+    await message.reply_markdown(
+        PREMIUM_BENEFITS + f"\nPrice: *{PREMIUM_STARS} ⭐ Stars per month*.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"⭐ Subscribe — {PREMIUM_STARS} Stars/month", url=link)]]))
+
+
+async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_premium_offer(update.message, update.effective_user.id, context.bot)
+
+
+async def precheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.pre_checkout_query
+    ok = q.currency == "XTR" and q.invoice_payload == f"premium:{q.from_user.id}"
+    await q.answer(ok=ok, error_message=None if ok else "This invoice isn't valid anymore. Send /premium again.")
+
+
+async def sync_app_plan(uid: int):
+    if not has_app_key(uid):
+        return
+    plan = "premium" if is_premium(uid) else "app_free"
+    try:
+        await call(admin_api.set_plan_by_name, f"tg:{uid}", plan)
+        with store.tx("bot") as conn:
+            conn.execute("UPDATE app_keys SET plan=? WHERE user_id=?", (plan, uid))
+    except SkyMateError as e:
+        logger.warning("Could not update app plan for %s: %s", uid, e)
+
+
+async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sp = update.message.successful_payment
+    uid = update.effective_user.id
+    now = datetime.now(timezone.utc)
+    if sp.subscription_expiration_date:
+        until = sp.subscription_expiration_date
+    else:
+        current = premium_until(uid)
+        until = max(current, now) + timedelta(days=30) if current else now + timedelta(days=30)
+    grant_premium(uid, until, sp.telegram_payment_charge_id, sp.total_amount, bool(sp.is_recurring))
+    await sync_app_plan(uid)
+    logger.info("Premium payment: user %s, %s stars, until %s", uid, sp.total_amount, until)
+    if sp.is_first_recurring is False:
+        return
+    await update.message.reply_markdown(
+        f"🎉 *Welcome to SkyMate Premium!* Active until {until:%d %b %Y}.\n\n"
+        "• Set your city for severe-weather warnings: /subscribe\n"
+        "• 10-day forecast: /week `<city>`\n"
+        "• Desktop app key: /app")
+
+
+async def paysupport_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    contact = SUPPORT_CONTACT or "the bot owner"
+    await update.message.reply_text(
+        "💬 Payment support\n\n"
+        f"For problems with a Premium payment or a refund request, contact {contact} and include the date "
+        "of the payment. You can cancel your subscription anytime in Telegram: Settings → My Stars.")
+
+
+async def refund_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin only: /refund <user_id> — refunds the user's latest Premium payment."""
+    if update.effective_user.id != BOT_ADMIN_ID:
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Usage: /refund <user_id>")
+        return
+    uid = int(context.args[0])
+    with store.tx("bot") as conn:
+        row = conn.execute("SELECT charge_id FROM payments WHERE user_id=? AND refunded=0 ORDER BY created_at DESC LIMIT 1",
+                           (uid,)).fetchone()
+    if not row:
+        await update.message.reply_text("No refundable payment found for that user.")
+        return
+    try:
+        await context.bot.refund_star_payment(uid, row[0])
+    except Exception as e:
+        await update.message.reply_text(f"Refund failed: {e}")
+        return
+    with store.tx("bot") as conn:
+        conn.execute("UPDATE payments SET refunded=1 WHERE charge_id=?", (row[0],))
+        conn.execute("UPDATE premium SET until=? WHERE user_id=?", (int(datetime.now(timezone.utc).timestamp()), uid))
+    await sync_app_plan(uid)
+    await update.message.reply_text(f"✅ Refunded {row[0]} to {uid}; Premium removed.")
+
+
+async def premiumstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != BOT_ADMIN_ID:
+        return
+    now = int(datetime.now(timezone.utc).timestamp())
+    with store.tx("bot") as conn:
+        active = conn.execute("SELECT COUNT(*) FROM premium WHERE until > ?", (now,)).fetchone()[0]
+        month = conn.execute("SELECT COUNT(*), COALESCE(SUM(stars),0) FROM payments WHERE refunded=0 AND "
+                             "created_at >= ?", (store.ago(30),)).fetchone()
+        total = conn.execute("SELECT COALESCE(SUM(stars),0) FROM payments WHERE refunded=0").fetchone()[0]
+        users = conn.execute("SELECT COUNT(*) FROM user_settings").fetchone()[0]
+    await update.message.reply_text(
+        f"⭐ Premium stats\n\nActive subscribers: {active}\nLast 30 days: {month[0]} payments, {month[1]} Stars\n"
+        f"All time: {total} Stars\nUsers with saved settings: {users}")
+
+
+async def app_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    plan = "premium" if is_premium(uid) else "app_free"
+    try:
+        await call(admin_api.revoke_by_name, f"tg:{uid}")
+        key = await call(admin_api.create_key, f"tg:{uid}", plan)
+    except SkyMateError as e:
+        logger.error("App key creation failed: %s", e)
+        await update.message.reply_text("⚠️ Couldn't create your app key right now. Please try again later.")
+        return
+    with store.tx("bot") as conn:
+        conn.execute("INSERT INTO app_keys(user_id, plan, created_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE "
+                     "SET plan=excluded.plan, created_at=excluded.created_at", (uid, plan, store.now()))
+    server = PUBLIC_API_URL or api.base
+    download = f"\n\n⬇️ Download: {APP_DOWNLOAD_URL}" if APP_DOWNLOAD_URL else ""
+    tier = "⭐ Premium" if plan == "premium" else "Free (upgrade with /premium)"
+    await update.message.reply_markdown(
+        f"💻 *Your SkyMate desktop app key*\n\n`{key}`\n\n"
+        f"Server: `{server}`\nPlan: {tier}\n\n"
+        "Open the app, click ⚙, paste the key. Keep it private: anyone with it can use your plan. "
+        "Sending /app again replaces the old key." + download)
+
+
+async def premium_maintenance(context: ContextTypes.DEFAULT_TYPE):
+    """Hourly: push new severe-weather warnings to Premium users and keep app key plans in sync."""
+    now = int(datetime.now(timezone.utc).timestamp())
+    with store.tx("bot") as conn:
+        premium_users = {r[0] for r in conn.execute("SELECT user_id FROM premium WHERE until > ?", (now,))}
+        if BOT_ADMIN_ID:
+            premium_users.add(BOT_ADMIN_ID)
+        subs = conn.execute("SELECT user_id, chat_id, city, units FROM user_subscriptions").fetchall()
+        app_rows = conn.execute("SELECT user_id, plan FROM app_keys").fetchall()
+    for uid, plan in app_rows:
+        if plan != ("premium" if uid in premium_users else "app_free"):
+            await sync_app_plan(uid)
+    for uid, chat_id, city, units in subs:
+        if uid not in premium_users:
+            continue
+        try:
+            d = await call(api.alerts, q=city, units=units)
+        except SkyMateError:
+            continue
+        fresh = []
+        with store.tx("bot") as conn:
+            for a in d["alerts"]:
+                if a["severity"] == "minor":
+                    continue
+                key = f"{city}:{a['id']}:{a['start'][:10]}"
+                if conn.execute("INSERT INTO alert_sent(user_id, alert_key, sent_at) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+                                (uid, key, store.now())).rowcount:
+                    fresh.append(a)
+        if fresh:
+            d["alerts"] = fresh
+            try:
+                await context.bot.send_message(chat_id, format_alerts(d), parse_mode='Markdown')
+            except Exception as e:
+                logger.warning("Alert push to %s failed: %s", uid, e)
 
 
 # ─── Free-text dispatcher ─────────────────────────────────────────────────────
@@ -676,7 +1001,35 @@ async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Error: %s", context.error, exc_info=context.error)
 
 
+BOT_COMMANDS = [
+    ("weather", "Current weather for a city"), ("forecast", "5-day forecast"), ("week", "⭐ 10-day forecast"),
+    ("hourly", "Next 24 hours"), ("alerts", "Weather warnings"), ("stations", "Nearby measuring stations"),
+    ("history", "Measured history chart"), ("aqi", "Air quality"), ("uv", "UV index"), ("radar", "Weather map"),
+    ("favorites", "Saved cities"), ("subscribe", "Daily report"), ("premium", "⭐ SkyMate Premium"),
+    ("app", "Desktop app key"), ("settings", "Units and subscription"), ("paysupport", "Payment help"),
+    ("help", "All commands"),
+]
+
+
+async def track_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    if not u or u.is_bot:
+        return
+    with store.tx("bot") as conn:
+        conn.execute(
+            "INSERT INTO users(user_id, username, first_name, last_name, language, first_seen, last_seen, actions) "
+            "VALUES (?,?,?,?,?,?,?,1) ON CONFLICT(user_id) DO UPDATE SET "
+            "username=excluded.username, first_name=excluded.first_name, last_name=excluded.last_name, "
+            "language=excluded.language, last_seen=excluded.last_seen, "
+            "first_seen=COALESCE(users.first_seen, excluded.first_seen), actions=users.actions+1",
+            (u.id, u.username, u.first_name, u.last_name, u.language_code, store.now(), store.now()))
+
+
 async def restore_subscriptions(app):
+    try:
+        await app.bot.set_my_commands(BOT_COMMANDS)
+    except Exception as e:
+        logger.warning("Could not register command menu: %s", e)
     subs = get_all_subscriptions()
     for uid, chat_id, city, units in subs:
         schedule_daily(app.job_queue, uid, chat_id, city, units)
@@ -684,11 +1037,12 @@ async def restore_subscriptions(app):
         logger.info("Restored %d subscription(s).", len(subs))
 
 
-def main():
+def build_app():
     if not TELEGRAM_BOT_TOKEN:
-        raise SystemExit("TELEGRAM_BOT_TOKEN is not set in .env")
+        raise SystemExit("TELEGRAM_BOT_TOKEN is not set")
     init_db()
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(restore_subscriptions).build()
+    app.add_handler(TypeHandler(Update, track_user), group=-1)
 
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler('addfavorite', add_favorite_start)],
@@ -703,15 +1057,26 @@ def main():
                      ("units", units_command), ("settings", settings_command), ("weather", weather_command),
                      ("forecast", forecast_command), ("week", week_command), ("hourly", hourly_command),
                      ("aqi", aqi_command), ("uv", uv_command), ("alerts", alerts_command),
-                     ("radar", radar_command), ("history", history_command), ("favorites", favorites_command),
-                     ("subscribe", subscribe_command), ("cancel", cancel)]:
+                     ("radar", radar_command), ("history", history_command), ("stations", stations_command),
+                     ("favorites", favorites_command),
+                     ("subscribe", subscribe_command), ("cancel", cancel), ("premium", premium_command),
+                     ("paysupport", paysupport_command), ("app", app_command), ("refund", refund_command),
+                     ("premiumstats", premiumstats_command)]:
         app.add_handler(CommandHandler(name, fn))
+    app.add_handler(PreCheckoutQueryHandler(precheckout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
+    app.job_queue.run_repeating(premium_maintenance, interval=3600, first=120, name="premium_maintenance")
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(InlineQueryHandler(inline_query_handler))
     app.add_handler(MessageHandler(filters.LOCATION, location_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_dispatcher))
     app.add_error_handler(error_handler)
-    app.run_polling()
+    return app
+
+
+def main():
+    """Local mode: long polling. On a web host the API server runs the bot by webhook instead."""
+    build_app().run_polling(drop_pending_updates=False)
 
 
 if __name__ == '__main__':

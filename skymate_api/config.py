@@ -44,7 +44,9 @@ ADMIN_TOKEN = os.environ.get("SKYMATE_ADMIN_TOKEN", "")
 MODELS = [m.strip() for m in os.environ.get("SKYMATE_MODELS", "ecmwf,gfs").split(",") if m.strip()]
 FORECAST_HOURS = int(os.environ.get("SKYMATE_FORECAST_HOURS", "240"))
 RUNS_TO_KEEP = int(os.environ.get("SKYMATE_RUNS_TO_KEEP", "2"))
-HISTORY_DAYS = int(os.environ.get("SKYMATE_HISTORY_DAYS", "365"))
+# 0 = keep the gridded history archive forever
+HISTORY_DAYS = int(os.environ.get("SKYMATE_HISTORY_DAYS", "0"))
+OBS_CHECK_MINUTES = int(os.environ.get("SKYMATE_OBS_CHECK_MINUTES", "10"))
 INGEST_ENABLED = os.environ.get("SKYMATE_INGEST", "1") == "1"
 INGEST_CHECK_MINUTES =int(os.environ.get("SKYMATE_INGEST_CHECK_MINUTES", "30"))
 DOWNLOAD_WORKERS = int(os.environ.get("SKYMATE_DOWNLOAD_WORKERS", "4"))

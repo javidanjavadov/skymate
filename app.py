@@ -15,7 +15,30 @@ import pytz
 
 from skymate_client import SkyMate, SkyMateError
 
-api = SkyMate()
+# Change to your public server address before building the .exe for other people.
+DEFAULT_API_URL = "http://127.0.0.1:8000"
+BOT_USERNAME = "SkyMate bot"
+
+APP_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SkyMate")
+os.makedirs(APP_DIR, exist_ok=True)
+SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
+
+
+def load_settings() -> dict:
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(data: dict):
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
+_settings = load_settings()
+api = SkyMate(_settings.get("api_url") or DEFAULT_API_URL, _settings.get("api_key", ""))
 
 WEATHER_EMOJIS = {
     'Clear': '☀️', 'Clouds': '☁️', 'Rain': '🌧️', 'Drizzle': '🌦️', 'Thunderstorm': '⛈️',
@@ -24,7 +47,7 @@ WEATHER_EMOJIS = {
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
-FAVORITES_FILE = os.path.join(os.path.dirname(__file__), "favorites.json")
+FAVORITES_FILE = os.path.join(APP_DIR, "favorites.json")
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -47,8 +70,11 @@ class SkyMateApp(ctk.CTk):
         self.current_city = None
         self._hourly_canvas = None
         self.favorites = self._load_favorites()
+        self.plan = None
+        self.max_days = 5
 
         self._build_ui()
+        self.after(300, self._check_account)
 
     # ── Persistence ──────────────────────────────────────────────────────────
 
@@ -88,7 +114,15 @@ class SkyMateApp(ctk.CTk):
             text_color=ACCENT, hover_color=BG_DARK,
             command=self._toggle_units
         )
-        self._units_btn.pack(side="right", padx=16)
+        self._units_btn.pack(side="right", padx=(4, 16))
+
+        ctk.CTkButton(
+            hdr, text="⚙", width=36, height=32, fg_color="transparent", border_width=1,
+            border_color=TEXT_DIM, hover_color=BG_DARK, command=self._open_settings
+        ).pack(side="right", padx=4)
+
+        self._plan_lbl = ctk.CTkLabel(hdr, text="", text_color=TEXT_DIM, font=ctk.CTkFont(size=12))
+        self._plan_lbl.pack(side="left", padx=4)
 
         search_btn = ctk.CTkButton(
             hdr, text="Search", width=80, height=32,
@@ -213,6 +247,58 @@ class SkyMateApp(ctk.CTk):
         self._map_frame.pack(fill="both", expand=True)
         ctk.CTkLabel(self._map_frame, text="Search a city to view its map", text_color=TEXT_DIM).pack(expand=True)
 
+    # ── Account / settings ────────────────────────────────────────────────────
+
+    def _check_account(self):
+        if not api.key:
+            self._lbl_desc.configure(text="Click ⚙ and paste your key. Get it in Telegram: send /app to "
+                                          f"the {BOT_USERNAME}.", text_color=TEXT_DIM)
+            self._plan_lbl.configure(text="not connected")
+            self._open_settings()
+            return
+        threading.Thread(target=self._load_plan, daemon=True).start()
+
+    def _load_plan(self):
+        try:
+            me = api.me()
+        except SkyMateError as e:
+            text = "invalid key: click ⚙" if e.status == 401 else "server offline"
+            self.after(0, lambda: self._plan_lbl.configure(text=text, text_color="orange"))
+            return
+        self.plan = me["plan"]
+        self.max_days = me["limits"].get("max_forecast_days") or 10
+        premium = self.plan not in ("free", "app_free")
+        label = "⭐ Premium" if premium else "Free: /premium in Telegram for 10-day forecasts"
+        self.after(0, lambda: self._plan_lbl.configure(text=label, text_color=ACCENT if premium else TEXT_DIM))
+
+    def _open_settings(self):
+        win = ctk.CTkToplevel(self)
+        win.title("SkyMate settings")
+        win.geometry("460x250")
+        win.configure(fg_color=BG_DARK)
+        win.transient(self)
+        win.after(100, win.grab_set)
+        ctk.CTkLabel(win, text="Your key (send /app to the SkyMate Telegram bot to get one)").pack(
+            anchor="w", padx=16, pady=(16, 2))
+        key_var = ctk.StringVar(value=api.key)
+        ctk.CTkEntry(win, textvariable=key_var, width=420, show="•").pack(padx=16)
+        ctk.CTkLabel(win, text="Server address").pack(anchor="w", padx=16, pady=(12, 2))
+        url_var = ctk.StringVar(value=api.base)
+        ctk.CTkEntry(win, textvariable=url_var, width=420).pack(padx=16)
+
+        def save():
+            url = url_var.get().strip() or DEFAULT_API_URL
+            key = key_var.get().strip()
+            api.configure(url, key)
+            save_settings({"api_url": url, "api_key": key})
+            win.destroy()
+            self._plan_lbl.configure(text="checking…", text_color=TEXT_DIM)
+            threading.Thread(target=self._load_plan, daemon=True).start()
+            if self.current_city:
+                self._fetch_city(self.current_city)
+
+        ctk.CTkButton(win, text="Save", command=save).pack(pady=16)
+
     # ── Welcome / loading states ──────────────────────────────────────────────
 
     def _show_welcome(self):
@@ -251,6 +337,10 @@ class SkyMateApp(ctk.CTk):
         except SkyMateError as e:
             if e.status == 404:
                 fail(f"City '{city}' not found", "Check the spelling or try 'City, CC' (e.g. Paris, FR)")
+            elif e.status == 401:
+                fail("Key missing or invalid", "Click ⚙ and paste the key from /app in the Telegram bot")
+            elif e.status == 429:
+                fail("Daily limit reached", "Your plan's daily request limit is used up. Premium raises it.")
             else:
                 fail("Weather service unavailable", e.message)
             return
@@ -265,7 +355,7 @@ class SkyMateApp(ctk.CTk):
             except SkyMateError:
                 return None
 
-        daily = safe(api.daily, lat=lat, lon=lon, days=10, units=self.units)
+        daily = safe(api.daily, lat=lat, lon=lon, days=self.max_days, units=self.units)
         hourly = safe(api.hourly, lat=lat, lon=lon, hours=24, units=self.units)
         aq = safe(api.air_quality, lat=lat, lon=lon)
         alerts = safe(api.alerts, lat=lat, lon=lon, units=self.units)
