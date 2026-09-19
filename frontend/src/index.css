@@ -153,13 +153,21 @@ body {
 .scroll-row { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.25) transparent; overscroll-behavior-x: contain; }
 .scroll-row::-webkit-scrollbar { height: 6px; }
 .scroll-row::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.25); border-radius: 999px; }
-@keyframes sky-drift {
-  from { transform: translate3d(-8vw, 0, 0); }
-  to { transform: translate3d(8vw, 0, 0); }
-}
-.sky-cloud { animation: sky-drift linear infinite alternate; will-change: transform; }
+@keyframes sky-spin { to { transform: rotate(360deg); } }
+@keyframes sky-pulse { 0%, 100% { transform: scale(1); opacity: 0.85; } 50% { transform: scale(1.08); opacity: 1; } }
+@keyframes sky-beam { 0%, 100% { opacity: 0.35; transform: translateX(-2vmin); } 50% { opacity: 0.9; transform: translateX(3vmin); } }
+@keyframes sky-cloud { from { transform: translate3d(-70vw, 0, 0); } to { transform: translate3d(120vw, 0, 0); } }
+@keyframes sky-mist { 0%, 100% { opacity: 0.55; transform: translateX(-3vw); } 50% { opacity: 1; transform: translateX(3vw); } }
+@keyframes sky-twinkle { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+.sky-spin { animation: sky-spin 90s linear infinite; }
+.sky-spin-reverse { animation: sky-spin 140s linear infinite reverse; }
+.sky-pulse { animation: sky-pulse 6s ease-in-out infinite; }
+.sky-beam { animation: sky-beam 12s ease-in-out infinite; }
+.sky-cloud-move { animation: sky-cloud 120s linear infinite; will-change: transform; }
+.sky-mist { animation: sky-mist 14s ease-in-out infinite; }
+.sky-twinkle { animation: sky-twinkle 4s ease-in-out infinite; }
+.sky[data-paused] * { animation-play-state: paused !important; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  .sky-cloud { animation: none; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }

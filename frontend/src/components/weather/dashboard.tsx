@@ -13,7 +13,7 @@ import {
   compass, feelsNote, fmt, summary, title, uvCategory, type Dashboard as Data, type Units,
 } from "@/lib/weather"
 
-const panel = "rounded-[2rem] border border-white/15 bg-slate-950/30 backdrop-blur-2xl shadow-[0_20px_60px_-20px_rgba(0,0,0,0.6)]"
+const panel = "rounded-[2rem] border border-white/15 bg-slate-950/25 backdrop-blur-md shadow-[0_20px_60px_-20px_rgba(0,0,0,0.6)]"
 
 function CardTitle({ icon, children, id }: { icon: ReactNode; children: ReactNode; id?: string }) {
   return (
@@ -216,7 +216,7 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
 
       {/* Right column: hourly, 10-day, UV, wind */}
       <div className="flex min-w-0 flex-col gap-4">
-        <section aria-labelledby="hourly-title" className="rounded-3xl border border-white/10 bg-slate-950/45 p-4 sm:p-5">
+        <section aria-labelledby="hourly-title" className="rounded-3xl border border-white/10 bg-slate-950/40 p-4 sm:p-5">
           <CardTitle id="hourly-title" icon={<Clock />}>Hourly Forecast</CardTitle>
           <div className="mt-3 border-t border-white/10" />
           <ol role="list" tabIndex={0} aria-label="Hourly forecast, scroll horizontally"
@@ -233,7 +233,7 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
           </ol>
         </section>
 
-        <section aria-labelledby="daily-title" className="rounded-3xl border border-white/10 bg-slate-950/45 p-4 sm:p-5">
+        <section aria-labelledby="daily-title" className="rounded-3xl border border-white/10 bg-slate-950/40 p-4 sm:p-5">
           <CardTitle id="daily-title" icon={<CalendarDays />}>{data.daily.length}-Day Forecast</CardTitle>
           <div className="mt-3 border-t border-white/10" />
           <ol role="list" tabIndex={0} aria-label="Daily forecast, scroll horizontally"
@@ -253,7 +253,7 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
         </section>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <section aria-labelledby="uv-title" className="flex min-w-0 flex-col rounded-3xl border border-white/10 bg-slate-950/45 p-4 sm:p-5">
+          <section aria-labelledby="uv-title" className="flex min-w-0 flex-col rounded-3xl border border-white/10 bg-slate-950/40 p-4 sm:p-5">
             <CardTitle id="uv-title" icon={<Sun />}>UV Index</CardTitle>
             <p className="mt-4 text-4xl font-medium tabular-nums text-white">{now.uv_index == null ? "–" : fmt.number(now.uv_index, 0)}</p>
             <p className="text-lg text-white/90">{uvCategory(now.uv_index)}</p>
@@ -267,7 +267,7 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
             </p>
           </section>
 
-          <section aria-labelledby="wind-title" className="min-w-0 rounded-3xl border border-white/10 bg-slate-950/45 p-4 sm:p-5">
+          <section aria-labelledby="wind-title" className="min-w-0 rounded-3xl border border-white/10 bg-slate-950/40 p-4 sm:p-5">
             <CardTitle id="wind-title" icon={<Wind />}>Wind</CardTitle>
             <div className="mt-3 flex items-center justify-between gap-3">
               <dl className="min-w-0 flex-1 divide-y divide-white/10">
