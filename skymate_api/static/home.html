@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkyMate Weather</title>
+<style>
+:root { --bg: #f6f7f9; --panel: #fff; --text: #16181d; --muted: #6b7280; --line: #e5e7eb; --accent: #0b84d8; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1115; --panel: #171a21; --text: #e8eaf0; --muted: #9aa3b2; --line: #262b36; --accent: #4fb3f6; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+main { max-width: 860px; margin: 0 auto; padding: 56px 16px; }
+h1 { font-size: 40px; margin: 0 0 8px; }
+.lead { color: var(--muted); font-size: 19px; margin: 0 0 32px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+a.card { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; color: inherit; text-decoration: none; }
+a.card:hover { border-color: var(--accent); }
+.card b { display: block; font-size: 17px; margin-bottom: 4px; }
+.card span { color: var(--muted); font-size: 14px; }
+h2 { font-size: 18px; margin: 40px 0 12px; }
+ul { color: var(--muted); padding-left: 20px; }
+footer { color: var(--muted); font-size: 13px; margin-top: 48px; }
+#status { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🌤 SkyMate</h1>
+  <p class="lead">Weather forecasts and real station measurements for every city in the world.</p>
+  <div id="status">Checking service status…</div>
+  <div class="grid">
+    <a class="card" href="https://t.me/skymatee_bot"><b>Telegram bot</b><span>Weather, 10-day forecasts, warnings and Premium in Telegram.</span></a>
+    <a class="card" href="/docs"><b>Weather API</b><span>Documentation and live testing for developers.</span></a>
+    <a class="card" href="/v1/plans"><b>API plans</b><span>Free to Business, from $0 to $299 a month.</span></a>
+  </div>
+  <h2>What SkyMate provides</h2>
+  <ul>
+    <li>Current weather with real measurements from airports and national weather stations</li>
+    <li>Hourly and 10-day forecasts from global weather models</li>
+    <li>Severe-weather warnings, UV index, air quality and weather maps</li>
+    <li>Measured history for weather stations</li>
+  </ul>
+  <footer>Forecast data derived from NOAA GFS (public domain) and ECMWF open data (CC-BY-4.0). Place names from GeoNames (CC-BY 4.0).</footer>
+</main>
+<script>
+fetch("/v1/status").then(r => r.json()).then(s => {
+  const gfs = Object.values(s.models || {}).find(m => m.latest_run);
+  const obs = s.observations || {};
+  document.getElementById("status").textContent = "✅ Online" +
+    (gfs ? ` · forecast issued ${gfs.age_hours} h ago` : " · forecast updating") +
+    (obs.readings ? ` · ${obs.readings.toLocaleString()} measurements stored` : "");
+}).catch(() => { document.getElementById("status").textContent = "Service is starting…"; });
+</script>
+</body>
+</html>

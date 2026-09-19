@@ -6,7 +6,9 @@ from typing import Literal
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from pathlib import Path
+
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from . import __version__, admin_panel, auth, db, forecast, geo, hosting, maps, observations, scheduler, store
 from .config import ADMIN_TOKEN
@@ -149,6 +151,14 @@ def _respond(payload: dict, units: str):
 
 
 # ─── Public ──────────────────────────────────────────────────────────────────
+
+HOME_PAGE = Path(__file__).parent / "static" / "home.html"
+
+
+@app.get("/", include_in_schema=False, response_class=HTMLResponse)
+def home():
+    return HOME_PAGE.read_text(encoding="utf-8")
+
 
 @app.get("/health", tags=["service"])
 def health():
