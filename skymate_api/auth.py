@@ -136,5 +136,5 @@ def check(key: str | None, endpoint: str) -> tuple[dict, dict]:
                 raise AuthError(429, "Daily quota exceeded for your plan.", {"Retry-After": "3600"})
             headers["X-RateLimit-Remaining-Day"] = str(plan["daily"] - used - 1)
         c.execute("INSERT INTO usage(key_id, day, endpoint, count) VALUES (?,?,?,1) "
-                  "ON CONFLICT(key_id, day, endpoint) DO UPDATE SET count=count+1", (info["id"], day, endpoint))
+                  "ON CONFLICT(key_id, day, endpoint) DO UPDATE SET count=usage.count+1", (info["id"], day, endpoint))
     return info, headers
