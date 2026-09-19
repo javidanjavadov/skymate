@@ -11,10 +11,11 @@ from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import __version__, admin_panel, auth, db, forecast, geo, hosting, maps, observations, scheduler, security, store
+from . import __version__, admin_panel, auth, db, forecast, geo, hosting, maps, observations, scheduler, security, site, store
 
 log = logging.getLogger("skymate.server")
 STATIC = Path(__file__).parent / "static"
@@ -84,13 +85,15 @@ app = FastAPI(title="SkyMate Weather API", version=__version__, description=DESC
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"],
                    allow_headers=["X-API-Key", "Content-Type", "X-Request-ID"],
                    expose_headers=["X-Request-ID", "X-RateLimit-Remaining-Day", "X-Plan"], max_age=3600)
+app.include_router(site.router)
 app.include_router(admin_panel.router)
 app.include_router(hosting.router)
+app.mount("/assets", StaticFiles(directory=STATIC / "assets"), name="assets")
 
 
 # ─── Middleware: request id, public rate limit, security headers ─────────────
 
-_PUBLIC_PATHS = ("/", "/v1/status", "/v1/plans", "/docs", "/redoc", "/openapi.json")
+_PUBLIC_PATHS = ("/", "/terms", "/privacy", "/v1/status", "/v1/plans", "/docs", "/redoc", "/openapi.json")
 
 
 @app.middleware("http")
@@ -236,12 +239,7 @@ def _date(value: str | None, name: str) -> datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
-# ─── Public pages ────────────────────────────────────────────────────────────
-
-@app.get("/", include_in_schema=False, response_class=HTMLResponse)
-def home():
-    return (STATIC / "home.html").read_text(encoding="utf-8")
-
+# ─── Service ─────────────────────────────────────────────────────────────────
 
 @app.get("/health", include_in_schema=False)
 def health():

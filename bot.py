@@ -394,6 +394,13 @@ async def reply_weather(message, user_id: int, city=None, lat=None, lon=None, ed
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    deep_link = (context.args or [""])[0]
+    if deep_link == "premium":
+        await send_premium_offer(update.message, update.effective_user.id, context.bot)
+        return
+    if deep_link == "app":
+        await app_command(update, context)
+        return
     keyboard = [
         [InlineKeyboardButton("🌤 Weather", switch_inline_query_current_chat=''),
          InlineKeyboardButton("📅 Forecast", callback_data='forecast_main')],
@@ -468,7 +475,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/plans — Free vs ⭐ Premium\n"
         "/premium — ⭐ Get Premium\n"
         "/app — Desktop app key\n"
-        "/paysupport — Payment help\n\n"
+        "/paysupport — Payment help\n"
+        "/deletemydata — Delete your data\n\n"
         "Or just type any city name.")
 
 async def units_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -994,6 +1002,29 @@ async def app_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Sending /app again replaces the old key." + download)
 
 
+async def deletemydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if (context.args or [""])[0].lower() != "confirm":
+        await update.message.reply_markdown(
+            "🗑 *Delete your data*\n\nThis removes your settings, favorites, daily report, desktop-app key and "
+            "profile from SkyMate. An active Premium subscription is not refunded; cancel it first in Telegram: "
+            "Settings → My Stars. Payment records are kept where the law requires it.\n\n"
+            "To confirm, send: `/deletemydata confirm`")
+        return
+    uid = update.effective_user.id
+    try:
+        await call(admin_api.revoke_by_name, f"tg:{uid}")
+    except SkyMateError as e:
+        logger.warning("Could not revoke app key for %s during deletion: %s", uid, e)
+    for job in context.job_queue.get_jobs_by_name(f'daily_{uid}'):
+        job.schedule_removal()
+    with store.tx("bot") as conn:
+        for table in ("user_settings", "user_favorites", "user_subscriptions", "app_keys", "alert_sent", "users"):
+            conn.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
+    context.user_data.clear()
+    logger.info("Deleted data for user %s on request", uid)
+    await update.message.reply_text("✅ Your data has been deleted. Send /start anytime to use SkyMate again.")
+
+
 async def premium_maintenance(context: ContextTypes.DEFAULT_TYPE):
     """Hourly: push new severe-weather warnings to Premium users and keep app key plans in sync."""
     now = int(datetime.now(timezone.utc).timestamp())
@@ -1098,6 +1129,7 @@ BOT_COMMANDS = [
     ("favorites", "Saved cities"), ("subscribe", "Daily report"), ("premium", "⭐ SkyMate Premium"),
     ("plans", "Free vs Premium"),
     ("app", "Desktop app key"), ("settings", "Units and subscription"), ("paysupport", "Payment help"),
+    ("deletemydata", "Delete your data"),
     ("help", "All commands"),
 ]
 
@@ -1153,7 +1185,7 @@ def build_app():
                      ("favorites", favorites_command),
                      ("subscribe", subscribe_command), ("cancel", cancel), ("premium", premium_command), ("plans", plans_command),
                      ("paysupport", paysupport_command), ("app", app_command), ("refund", refund_command),
-                     ("premiumstats", premiumstats_command), ("admin", admin_command)]:
+                     ("premiumstats", premiumstats_command), ("admin", admin_command), ("deletemydata", deletemydata_command)]:
         app.add_handler(CommandHandler(name, fn))
     app.add_handler(PreCheckoutQueryHandler(precheckout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
