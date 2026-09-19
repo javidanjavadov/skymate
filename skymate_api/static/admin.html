@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SkyMate Admin</title>
+<title>SkyMate Console</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
 <style>
 :root {
   --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #6b7280; --line: #e5e7eb;
@@ -63,7 +65,7 @@ button.b.danger { color: var(--bad); }
 <div id="login">
   <div class="card">
     <h1 style="margin:0 0 4px;font-size:18px">SkyMate Admin</h1>
-    <div class="muted">Enter your admin token (SKYMATE_ADMIN_TOKEN in .env).</div>
+    <div class="muted">Enter your admin token.</div>
     <form onsubmit="event.preventDefault(); login();">
       <input id="tok" type="password" placeholder="Admin token" autocomplete="current-password">
       <button class="b primary" type="submit">Sign in</button>
@@ -81,6 +83,7 @@ button.b.danger { color: var(--bad); }
       <button data-v="payments">Payments</button>
       <button data-v="keys">API keys</button>
       <button data-v="data">Data</button>
+      <button data-v="audit">Audit log</button>
     </nav>
     <span style="flex:1"></span>
     <button class="b" onclick="logout()">Sign out</button>
@@ -107,11 +110,13 @@ button.b.danger { color: var(--bad); }
       <div class="box"><table id="ktable"></table></div>
     </section>
     <section id="v-data" class="hidden"></section>
+    <section id="v-audit" class="hidden"><div class="box"><table id="atable"></table></div></section>
   </main>
 </div>
 <div id="toast"></div>
 
 <script>
+const API = location.pathname.replace(/\/+$/, "") + "/api";
 let TOKEN = sessionStorage.getItem("sm_admin") || "";
 let PLANS = {};
 const $ = (id) => document.getElementById(id);
@@ -124,9 +129,9 @@ let dt; function debounce(fn) { clearTimeout(dt); dt = setTimeout(fn, 250); }
 function toast(t) { const e = $("toast"); e.textContent = t; e.style.display = "block"; setTimeout(() => e.style.display = "none", 2500); }
 
 async function call(path, method = "GET") {
-  const r = await fetch("/admin/api" + path, { method, headers: { "X-Admin-Token": TOKEN } });
+  const r = await fetch(API + path, { method, headers: { "X-Admin-Token": TOKEN }, cache: "no-store" });
   const body = await r.json().catch(() => ({}));
-  if (r.status === 401) { logout(); throw new Error("Session expired"); }
+  if (r.status === 401 || r.status === 404) { logout(); throw new Error("Session expired"); }
   if (!r.ok) throw new Error(body.error?.message || r.statusText);
   return body;
 }
@@ -142,7 +147,7 @@ $("nav").onclick = (e) => { const v = e.target.dataset.v; if (!v) return; show(v
 function show(v) {
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.v === v));
   document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "v-" + v));
-  ({ overview: loadOverview, users: loadUsers, payments: loadPayments, keys: loadKeys, data: loadData })[v]();
+  ({ overview: loadOverview, users: loadUsers, payments: loadPayments, keys: loadKeys, data: loadData, audit: loadAudit })[v]();
 }
 
 function card(k, v, s = "") { return `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`; }
@@ -281,7 +286,20 @@ async function loadData() {
     </table></div>`;
 }
 
-function start() { $("login").classList.add("hidden"); $("app").classList.remove("hidden"); show("overview"); }
+async function loadAudit() {
+  const d = await call("/audit");
+  $("atable").innerHTML = `<tr><th>Time (UTC)</th><th>Action</th><th>Details</th><th>IP address</th></tr>` +
+    (d.entries.length ? d.entries.map((e) => `<tr><td>${esc(e.at)}</td>
+      <td><span class="pill ${e.action.includes("failed") ? "bad" : "acc"}">${esc(e.action.replace(/_/g, " "))}</span></td>
+      <td>${esc(e.detail)}</td><td class="muted">${esc(e.ip)}</td></tr>`).join("")
+      : `<tr><td colspan="4" class="muted">No admin actions yet.</td></tr>`);
+}
+
+let idle;
+function resetIdle() { clearTimeout(idle); idle = setTimeout(() => { if (TOKEN) { logout(); alert("Signed out after 30 minutes of inactivity."); } }, 30 * 60 * 1000); }
+["click", "keydown", "mousemove"].forEach((ev) => document.addEventListener(ev, resetIdle, { passive: true }));
+
+function start() { resetIdle(); $("login").classList.add("hidden"); $("app").classList.remove("hidden"); show("overview"); }
 if (TOKEN) call("/overview").then(start).catch(() => {});
 </script>
 </body>

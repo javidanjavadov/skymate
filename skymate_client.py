@@ -1,5 +1,7 @@
 """Small client for the SkyMate Weather API (used by the bot and the desktop app)."""
+import hashlib
 import os
+from urllib.parse import quote
 
 import requests
 
@@ -90,18 +92,26 @@ class SkyMate:
         return self._get("/v1/status")
 
 
+def admin_prefix(token: str) -> str:
+    """Secret URL prefix of the admin panel; must match skymate_api.security.admin_prefix."""
+    return "/console-" + hashlib.sha256(f"skymate-admin-path:{token}".encode()).hexdigest()[:24]
+
+
 class SkyMateAdmin(SkyMate):
-    """Key management through the admin endpoints (needs SKYMATE_ADMIN_TOKEN)."""
+    """Key management through the hidden admin API (needs SKYMATE_ADMIN_TOKEN)."""
 
     def __init__(self, base_url=None, admin_token=None, timeout=30):
         super().__init__(base_url, "", timeout)
-        self.admin = {"X-Admin-Token": admin_token or os.environ.get("SKYMATE_ADMIN_TOKEN", "")}
+        token = admin_token or os.environ.get("SKYMATE_ADMIN_TOKEN", "")
+        self.admin = {"X-Admin-Token": token}
+        self.prefix = admin_prefix(token) + "/api"
 
     def create_key(self, name: str, plan: str) -> str:
-        return self._request("POST", "/admin/keys", headers=self.admin, name=name, plan=plan)["api_key"]
+        return self._request("POST", f"{self.prefix}/keys", headers=self.admin, name=name, plan=plan)["api_key"]
 
     def set_plan_by_name(self, name: str, plan: str):
-        return self._request("POST", f"/admin/keys/by-name/{name}/plan", headers=self.admin, plan=plan)
+        return self._request("POST", f"{self.prefix}/keys/by-name/{quote(name, safe='')}/plan",
+                             headers=self.admin, plan=plan)
 
     def revoke_by_name(self, name: str):
-        return self._request("POST", f"/admin/keys/by-name/{name}/revoke", headers=self.admin)
+        return self._request("POST", f"{self.prefix}/keys/by-name/{quote(name, safe='')}/revoke", headers=self.admin)

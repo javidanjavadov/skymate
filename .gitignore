@@ -10,3 +10,4 @@ dist/
 *.spec
 *.db-shm
 *.db-wal
+.pytest_cache/

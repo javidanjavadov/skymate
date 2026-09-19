@@ -1,10 +1,11 @@
+# Server (API + Telegram bot). Pinned for reproducible builds.
 python-telegram-bot[job-queue]==21.9
-fastapi
-uvicorn[standard]
-eccodes
-numpy
-requests
-matplotlib
-pytz
-timezonefinder
-psycopg[binary]
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+eccodes==2.48.0
+numpy==2.2.6
+requests==2.32.3
+matplotlib==3.10.7
+pytz==2025.2
+timezonefinder==8.1.0
+psycopg[binary]==3.3.6

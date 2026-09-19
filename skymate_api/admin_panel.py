@@ -1,30 +1,44 @@
-"""Owner admin panel: users, payments, API customers, usage and data health. Served at /admin."""
+"""Owner admin panel: users, payments, API customers, usage, data health and audit log.
+
+Served only under a secret URL prefix derived from the admin token (see security.admin_prefix), and every
+request must also carry the token. Any failed check answers 404, so the panel's existence is not disclosed.
+"""
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
-from fastapi import APIRouter, Depends, Header
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from starlette.exceptions import HTTPException
 
-from . import auth, db, forecast, store
-from .config import ADMIN_TOKEN
+from . import auth, db, forecast, security, store
+
 PAGE = Path(__file__).parent / "static" / "admin.html"
+PREFIX = security.ADMIN_PREFIX
 
 
-def require_admin(x_admin_token: str | None = Header(None)):
-    import secrets
-    if not ADMIN_TOKEN or not x_admin_token or not secrets.compare_digest(x_admin_token, ADMIN_TOKEN):
-        raise auth.AuthError(401, "Admin token required.")
+def require_admin(request: Request, x_admin_token: str | None = Header(None)):
+    if not security.check_admin_token(security.client_ip(request), x_admin_token):
+        raise HTTPException(status_code=404)
+
+
+def _audit(request: Request, action: str, detail: str = ""):
+    security.audit(security.client_ip(request), action, detail)
 
 
 router = APIRouter()
-api = APIRouter(prefix="/admin/api", dependencies=[Depends(require_admin)], tags=["admin"])
+api = APIRouter(dependencies=[Depends(require_admin)])
 
 
-@router.get("/admin", response_class=HTMLResponse, include_in_schema=False)
-def page():
-    return PAGE.read_text(encoding="utf-8")
+def page(request: Request):
+    if security.admin_locked(security.client_ip(request)):
+        raise HTTPException(status_code=404)
+    return HTMLResponse(PAGE.read_text(encoding="utf-8"))
+
+
+def page_redirect():
+    return RedirectResponse(PREFIX + "/", status_code=308)
 
 
 def _bot():
@@ -85,7 +99,8 @@ def overview():
 
 
 @api.get("/users")
-def users(search: str = "", limit: int = 100, offset: int = 0):
+def users(search: str = Query("", max_length=64), limit: int = Query(100, ge=1, le=500),
+          offset: int = Query(0, ge=0)):
     needle = search.strip().lstrip('@').lower()
     like = f"%{needle}%"
     with _bot() as b:
@@ -137,7 +152,7 @@ def _sync_app_key(uid: int, premium: bool):
 
 
 @api.post("/users/{uid}/premium")
-def grant_premium(uid: int, days: int = 30):
+def grant_premium(uid: int, request: Request = None, days: int = Query(30, ge=1, le=3650)):
     with _bot() as b:
         row = b.execute("SELECT until FROM premium WHERE user_id=?", (uid,)).fetchone()
         start = max(row[0] or 0, _now()) if row else _now()
@@ -148,19 +163,23 @@ def grant_premium(uid: int, days: int = 30):
         b.execute("INSERT INTO payments(charge_id, user_id, stars, until, created_at) VALUES (?,?,0,?,?)",
                   (f"manual-{_now()}-{uid}", uid, until, store.now()))
     _sync_app_key(uid, True)
+    if request:
+        _audit(request, "premium_granted", f"user={uid} days={days}")
     return {"user_id": uid, "premium_until": _iso(until)}
 
 
 @api.post("/users/{uid}/premium/remove")
-def remove_premium(uid: int):
+def remove_premium(uid: int, request: Request = None):
     with _bot() as b:
         b.execute("UPDATE premium SET until=? WHERE user_id=?", (_now(), uid))
     _sync_app_key(uid, False)
+    if request:
+        _audit(request, "premium_removed", f"user={uid}")
     return {"user_id": uid, "premium": False}
 
 
 @api.get("/payments")
-def payments(limit: int = 200):
+def payments(limit: int = Query(200, ge=1, le=1000)):
     with _bot() as b:
         rows = _rows(b, """SELECT p.charge_id, p.user_id, u.username, u.first_name, p.stars, p.until, p.refunded, p.created_at
                            FROM payments p LEFT JOIN users u ON u.user_id = p.user_id
@@ -172,7 +191,7 @@ def payments(limit: int = 200):
 
 
 @api.post("/payments/{charge_id}/refund")
-def refund(charge_id: str):
+def refund(charge_id: str, request: Request):
     with _bot() as b:
         row = b.execute("SELECT user_id, refunded FROM payments WHERE charge_id=?", (charge_id,)).fetchone()
     if not row:
@@ -190,6 +209,7 @@ def refund(charge_id: str):
         b.execute("UPDATE payments SET refunded=1 WHERE charge_id=?", (charge_id,))
         b.execute("UPDATE premium SET until=? WHERE user_id=?", (_now(), row["user_id"]))
     _sync_app_key(row["user_id"], False)
+    _audit(request, "payment_refunded", f"charge={charge_id} user={row['user_id']}")
     return {"refunded": True}
 
 
@@ -208,26 +228,55 @@ def keys():
 
 
 @api.post("/keys")
-def create_key(name: str, plan: str = "free"):
+def create_key(request: Request, name: str = Query(..., min_length=1, max_length=80), plan: str = "free"):
     try:
-        return {"api_key": auth.create_key(name, plan)}
+        key = auth.create_key(name.strip(), plan)
     except ValueError as e:
         raise auth.AuthError(400, str(e))
+    _audit(request, "key_created", f"name={name.strip()} plan={plan}")
+    return {"api_key": key}
 
 
 @api.post("/keys/{key_id}/plan")
-def key_plan(key_id: int, plan: str):
+def key_plan(key_id: int, plan: str, request: Request):
     try:
         auth.set_plan(key_id, plan)
     except ValueError as e:
         raise auth.AuthError(400, str(e))
+    _audit(request, "key_plan_changed", f"key={key_id} plan={plan}")
     return {"ok": True}
 
 
 @api.post("/keys/{key_id}/active")
-def key_active(key_id: int, active: bool):
+def key_active(key_id: int, active: bool, request: Request):
     auth.set_active(key_id, active)
+    _audit(request, "key_activated" if active else "key_revoked", f"key={key_id}")
     return {"ok": True}
+
+
+# Used by the Telegram bot to manage desktop-app keys, which it names "tg:<user id>".
+@api.post("/keys/by-name/{name}/plan")
+def plan_by_name(name: str, plan: str):
+    ids = [k["id"] for k in auth.list_keys() if k["name"] == name and k["active"]]
+    try:
+        for key_id in ids:
+            auth.set_plan(key_id, plan)
+    except ValueError as e:
+        raise auth.AuthError(400, str(e))
+    return {"updated": ids, "plan": plan}
+
+
+@api.post("/keys/by-name/{name}/revoke")
+def revoke_by_name(name: str):
+    ids = [k["id"] for k in auth.list_keys() if k["name"] == name and k["active"]]
+    for key_id in ids:
+        auth.set_active(key_id, False)
+    return {"revoked": ids}
+
+
+@api.get("/audit")
+def audit_log(limit: int = Query(200, ge=1, le=1000)):
+    return {"entries": security.audit_entries(limit)}
 
 
 @api.get("/data")
@@ -238,4 +287,7 @@ def data():
     return {"status": forecast.status(), "sources": health, "runs": runs}
 
 
-router.include_router(api)
+if PREFIX:
+    router.add_api_route(PREFIX, page_redirect, methods=["GET"], include_in_schema=False)
+    router.add_api_route(PREFIX + "/", page, methods=["GET"], include_in_schema=False)
+    router.include_router(api, prefix=PREFIX + "/api", include_in_schema=False)

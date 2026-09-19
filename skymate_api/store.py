@@ -9,12 +9,13 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from .config import DATA_DIR, ROOT
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 IS_PG = DATABASE_URL.startswith(("postgres://", "postgresql://"))
-SQLITE_FILES = {"bot": ROOT / "bot_data.db", "api": DATA_DIR / "skymate.db"}
+SQLITE_FILES = {"bot": Path(os.environ.get("SKYMATE_BOT_DB", ROOT / "bot_data.db")), "api": DATA_DIR / "skymate.db"}
 
 _local = threading.local()
 

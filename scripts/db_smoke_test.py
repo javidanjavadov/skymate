@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from skymate_api import admin_panel, auth, db, store  # noqa: E402
+from skymate_api import admin_panel, auth, db, security, store  # noqa: E402
 
 TEST_UID = 999_000_000_001
 TEST_KEY = "smoke-test"
@@ -20,6 +20,7 @@ def main():
     print("database:", "postgres" if store.IS_PG else "sqlite")
     db.init()
     store.init("bot")
+    security.init_audit()
     import bot
 
     bot.init_db()
@@ -56,12 +57,12 @@ def main():
     print("api key and usage queries ok")
 
     admin_panel.overview()
-    found = admin_panel.users(search="smoke")["users"]
+    found = admin_panel.users(search="smoke", limit=10, offset=0)["users"]
     assert found and found[0]["premium"], found
     admin_panel.user_detail(TEST_UID)
-    admin_panel.grant_premium(TEST_UID, 5)
-    admin_panel.remove_premium(TEST_UID)
-    admin_panel.payments()
+    admin_panel.grant_premium(TEST_UID, None, 5)
+    admin_panel.remove_premium(TEST_UID, None)
+    admin_panel.payments(limit=10)
     admin_panel.keys()
     print("admin panel queries ok")
 

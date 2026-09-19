@@ -8,7 +8,7 @@ import time
 
 import requests
 from fastapi import APIRouter, Header, Request
-from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 
 log = logging.getLogger("skymate.hosting")
 
@@ -53,7 +53,7 @@ async def stop_bot():
 async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: str | None = Header(None)):
     if not _ptb or not x_telegram_bot_api_secret_token or \
             not secrets.compare_digest(x_telegram_bot_api_secret_token, WEBHOOK_SECRET):
-        return JSONResponse({"ok": False}, status_code=403)
+        raise HTTPException(status_code=404)
     from telegram import Update
     await _ptb.update_queue.put(Update.de_json(await request.json(), _ptb.bot))
     return {"ok": True}

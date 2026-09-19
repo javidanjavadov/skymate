@@ -2,6 +2,9 @@ import asyncio
 import io
 import logging
 import os
+import re
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
 import matplotlib
@@ -14,12 +17,12 @@ from telegram import (
 )
 from telegram.ext import (
     ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler,
-    InlineQueryHandler, MessageHandler, PreCheckoutQueryHandler, TypeHandler, filters,
+    ApplicationHandlerStop, InlineQueryHandler, MessageHandler, PreCheckoutQueryHandler, TypeHandler, filters,
 )
 
 from skymate_api import store
 from skymate_api.config import load_env
-from skymate_client import SkyMate, SkyMateAdmin, SkyMateError
+from skymate_client import SkyMate, SkyMateAdmin, SkyMateError, admin_prefix
 
 load_env()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -34,6 +37,8 @@ APP_DOWNLOAD_URL = os.environ.get("APP_DOWNLOAD_URL", "")
 PUBLIC_API_URL = os.environ.get("PUBLIC_API_URL", "")
 DEFAULT_UNITS = 'metric'
 FREE_FAVORITES = 3
+MAX_TEXT = 100
+USER_RATE_LIMIT = 30  # updates per minute per user
 FREE_HISTORY_DAYS = 7
 api = SkyMate()
 admin_api = SkyMateAdmin()
@@ -155,6 +160,52 @@ def error_text(e: SkyMateError, what: str = "") -> str:
     return f"❌ {e.message}"
 
 
+def md(text) -> str:
+    """Escape user or third-party text for Telegram Markdown (legacy mode)."""
+    return re.sub(r"([_*`\[])", r"\\\1", str(text))
+
+
+def city_arg(context) -> str | None:
+    value = ' '.join(context.args).strip() if context.args else None
+    return value[:MAX_TEXT] if value else None
+
+
+_user_hits: dict[int, deque] = defaultdict(deque)
+_user_warned: dict[int, float] = {}
+
+
+async def rate_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Drops updates from users sending more than USER_RATE_LIMIT per minute."""
+    u = update.effective_user
+    if not u:
+        return
+    now = time.monotonic()
+    q = _user_hits[u.id]
+    while q and now - q[0] > 60:
+        q.popleft()
+    q.append(now)
+    if len(q) > USER_RATE_LIMIT:
+        if now - _user_warned.get(u.id, 0) > 60 and update.effective_message:
+            _user_warned[u.id] = now
+            await update.effective_message.reply_text("⏳ Too many requests. Please wait a minute.")
+        raise ApplicationHandlerStop
+
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner only: sends the private admin panel link. Everyone else gets no reply."""
+    if update.effective_user.id != BOT_ADMIN_ID or not BOT_ADMIN_ID:
+        return
+    token = os.environ.get("SKYMATE_ADMIN_TOKEN", "")
+    if not token:
+        await update.message.reply_text("Admin panel is not configured on this server.")
+        return
+    base = (PUBLIC_API_URL or api.base).rstrip("/")
+    await update.message.reply_text(
+        f"🔐 Admin panel:\n{base}{admin_prefix(token)}/\n\n"
+        "Sign in with SKYMATE_ADMIN_TOKEN. Keep this link private; it is only sent to you.",
+        disable_web_page_preview=True)
+
+
 # ─── Formatting ───────────────────────────────────────────────────────────────
 
 def _local(iso: str, loc: dict) -> datetime:
@@ -175,8 +226,11 @@ def _emoji(state: dict) -> str:
         return NIGHT_EMOJIS[state["condition"]]
     return WEATHER_EMOJIS.get(state.get("condition"), '🌡')
 
-def _place(loc: dict) -> str:
+def _place_plain(loc: dict) -> str:
     return f"{loc['name']}, {loc['country']}" if loc.get("country") else loc["name"]
+
+def _place(loc: dict) -> str:
+    return md(f"{loc['name']}, {loc['country']}" if loc.get("country") else loc["name"])
 
 def _freshness(meta: dict) -> str:
     if meta.get("stale"):
@@ -197,7 +251,7 @@ def format_measured(o: dict, u: dict) -> str:
     if o.get("pressure") is not None:
         parts.append(f"🔵 {_num(o['pressure'])} hPa")
     wx = f"\n   Weather: {o['weather']}" if o.get("weather") else ""
-    return (f"📡 *Measured* at {st['name']} ({st['distance_km']} km away, {_age(o['age_minutes'])})\n"
+    return (f"📡 *Measured* at {md(st['name'])} ({st['distance_km']} km away, {_age(o['age_minutes'])})\n"
             f"   {'  '.join(parts)}{wx}")
 
 def format_current(d: dict) -> str:
@@ -235,7 +289,7 @@ def format_current(d: dict) -> str:
         if obs.get("pressure") is not None:
             lines[6] = f"🔵 Pressure: {_num(obs['pressure'])} hPa{m}"
         st = obs["station"]
-        lines.append(f"\n📡 Measured at *{st['name']}* ({st['distance_km']} km, {_age(obs['age_minutes'])}). "
+        lines.append(f"\n📡 Measured at *{md(st['name'])}* ({st['distance_km']} km, {_age(obs['age_minutes'])}). "
                      "Other values are estimates.")
     else:
         lines.append("\n_No weather station nearby: values are model estimates._")
@@ -309,8 +363,6 @@ def weather_buttons(lat: float, lon: float, name: str) -> InlineKeyboardMarkup:
 
 # ─── Generic "city argument" helper ──────────────────────────────────────────
 
-def city_arg(context) -> str | None:
-    return ' '.join(context.args).strip() if context.args else None
 
 
 async def reply_weather(message, user_id: int, city=None, lat=None, lon=None, edit_query=None):
@@ -318,7 +370,7 @@ async def reply_weather(message, user_id: int, city=None, lat=None, lon=None, ed
     try:
         d = await call(api.current, units=units, **where(city, lat, lon))
     except SkyMateError as e:
-        text = error_text(e, f"*{city}*" if city else "")
+        text = error_text(e, f"*{md(city)}*" if city else "")
         if e.status == 404 and city:
             try:
                 hits = await call(api.geocode, city.split(',')[0][:3], 5)
@@ -462,7 +514,7 @@ async def _simple(update, context, usage, fn, fmt, **kw):
     try:
         d = await call(fn, q=city, **kw)
     except SkyMateError as e:
-        await update.message.reply_markdown(error_text(e, f"*{city}*"))
+        await update.message.reply_markdown(error_text(e, f"*{md(city)}*"))
         return
     await update.message.reply_markdown(fmt(d))
 
@@ -543,12 +595,12 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         note = f"\nThis station's archive: {cov['readings']:,} readings since {cov['from'][:4]}" if cov["from"] else ""
     except SkyMateError as e:
         if e.status != 404:
-            await update.message.reply_markdown(error_text(e, f"*{city}*"))
+            await update.message.reply_markdown(error_text(e, f"*{md(city)}*"))
             return
         try:
             d = await call(api.history, q=city, days=min(days, 90), units=units)
         except SkyMateError as e2:
-            await update.message.reply_markdown(error_text(e2, f"*{city}*"))
+            await update.message.reply_markdown(error_text(e2, f"*{md(city)}*"))
             return
         pts = [(datetime.fromisoformat(p["time"]), p["temperature"]) for p in d["history"] if p["temperature"] is not None]
         label, note = "Model estimate (no station nearby)", ""
@@ -572,7 +624,7 @@ async def stations_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         d = await call(api.observations_latest, q=city, radius_km=100, limit=8, units=units)
     except SkyMateError as e:
-        await update.message.reply_markdown(error_text(e, f"*{city}*"))
+        await update.message.reply_markdown(error_text(e, f"*{md(city)}*"))
         return
     if not d["stations"]:
         await update.message.reply_markdown(f"No weather stations reported near *{_place(d['location'])}* in the last 3 hours.")
@@ -582,7 +634,7 @@ async def stations_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for h in d["stations"]:
         st, o = h["station"], h["observation"]
         kind = "✈️" if st["kind"] == "airport" else "🏛"
-        msg += (f"{kind} *{st['name']}* — {st['distance_km']} km\n"
+        msg += (f"{kind} *{md(st['name'])}* — {st['distance_km']} km\n"
                 f"   {_num(o['temperature'], 1)}{u['temperature']}, wind {_num(o.get('wind_speed'), 1)} {u['speed']}, "
                 f"{_age(o['age_minutes'])}\n")
     await update.message.reply_markdown(msg + "\n✈️ airport  🏛 national weather service")
@@ -616,7 +668,7 @@ async def _add_favorite(message, uid: int, raw: str):
         await message.reply_text(error_text(e))
         return
     if not hits:
-        await message.reply_markdown(f"❌ *{raw}* not found.")
+        await message.reply_markdown(f"❌ *{md(raw)}* not found.")
         return
     name = hits[0]["name"]
     add_user_favorite(uid, name)
@@ -849,6 +901,10 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     sp = update.message.successful_payment
     uid = update.effective_user.id
     now = datetime.now(timezone.utc)
+    if sp.currency != "XTR" or sp.total_amount < PREMIUM_STARS or sp.invoice_payload != f"premium:{uid}":
+        logger.error("Rejected unexpected payment from %s: %s %s payload=%s", uid, sp.total_amount, sp.currency,
+                     sp.invoice_payload)
+        return
     if sp.subscription_expiration_date:
         until = sp.subscription_expiration_date
     else:
@@ -977,6 +1033,9 @@ async def premium_maintenance(context: ContextTypes.DEFAULT_TYPE):
 async def text_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE):
     awaiting = context.user_data.pop('awaiting', None)
     text = update.message.text.strip()
+    if len(text) > MAX_TEXT:
+        await update.message.reply_text("That's too long for a city name.")
+        return
     uid = update.effective_user.id
 
     if awaiting == 'subscribe_city':
@@ -989,7 +1048,7 @@ async def text_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         if not hits:
             context.user_data['awaiting'] = 'subscribe_city'
-            await update.message.reply_markdown(f"❌ *{text}* not found. Please send another city name:")
+            await update.message.reply_markdown(f"❌ *{md(text)}* not found. Please send another city name:")
             return
         city = f"{hits[0]['name']}, {hits[0]['country']}"
         schedule_daily(context.job_queue, uid, chat_id, city, units)
@@ -1018,7 +1077,7 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         d = await call(api.current, q=q, units=units)
         c = d["current"]
         results = [InlineQueryResultArticle(
-            id='1', title=f"{_place(d['location'])}: {_num(c['temperature'])}{d['units']['temperature']}",
+            id='1', title=f"{_place_plain(d['location'])}: {_num(c['temperature'])}{d['units']['temperature']}",
             description=c['description'].capitalize(),
             input_message_content=InputTextMessageContent(format_current(d), parse_mode='Markdown'))]
     except SkyMateError:
@@ -1074,6 +1133,7 @@ def build_app():
         raise SystemExit("TELEGRAM_BOT_TOKEN is not set")
     init_db()
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(restore_subscriptions).build()
+    app.add_handler(TypeHandler(Update, rate_limit), group=-2)
     app.add_handler(TypeHandler(Update, track_user), group=-1)
 
     app.add_handler(ConversationHandler(
@@ -1093,7 +1153,7 @@ def build_app():
                      ("favorites", favorites_command),
                      ("subscribe", subscribe_command), ("cancel", cancel), ("premium", premium_command), ("plans", plans_command),
                      ("paysupport", paysupport_command), ("app", app_command), ("refund", refund_command),
-                     ("premiumstats", premiumstats_command)]:
+                     ("premiumstats", premiumstats_command), ("admin", admin_command)]:
         app.add_handler(CommandHandler(name, fn))
     app.add_handler(PreCheckoutQueryHandler(precheckout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))

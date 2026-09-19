@@ -1,12 +1,5 @@
-python-telegram-bot[job-queue]==21.9
-fastapi
-uvicorn[standard]
-eccodes
-numpy
-requests
-matplotlib
-pytz
-timezonefinder
-customtkinter
-Pillow
-psycopg[binary]
+# Everything for local development: server, desktop app and tests.
+-r requirements-server.txt
+customtkinter==6.0.0
+Pillow==11.2.1
+pytest==8.4.1
