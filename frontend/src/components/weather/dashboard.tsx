@@ -13,8 +13,8 @@ import {
   type Dashboard as Data, type Place, type Units,
 } from "@/lib/weather"
 
-// No frosted frame around the dashboard: the sky shows between solid cards.
-const panel = "grid gap-4 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]"
+// Two equal columns that end on the same line; the sky shows between the cards.
+const panel = "grid gap-4 lg:grid-cols-2"
 
 function CardTitle({ icon, children, id }: { icon: ReactNode; children: ReactNode; id?: string }) {
   return (
@@ -478,7 +478,7 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
           </div>
         </section>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid flex-1 gap-4 sm:grid-cols-2">
           <section aria-labelledby="uv-title" className={cn(card, "flex min-w-0 flex-col p-4 sm:p-5")}>
             <CardTitle id="uv-title" icon={<Sun />}>{sel.kind === "day" ? "UV Index · Peak" : "UV Index"}</CardTitle>
             <p className="mt-4 text-4xl font-medium tabular-nums text-white">{view.uv.value == null ? "–" : fmt.number(view.uv.value, 0)}</p>
