@@ -1,979 +1,718 @@
+import asyncio
+import io
 import logging
-import requests
-import json
+import os
+import sqlite3
+from datetime import datetime, timedelta, timezone
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import pytz
-import time
-from datetime import datetime, timedelta
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardMarkup, KeyboardButton, InputMediaPhoto,
-    ReplyKeyboardRemove, InlineQueryResultArticle, InputTextMessageContent
+    InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, InputTextMessageContent,
+    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update,
 )
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, filters,
-    ContextTypes, CallbackQueryHandler, JobQueue, ConversationHandler,
-    InlineQueryHandler
+    ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler,
+    InlineQueryHandler, MessageHandler, filters,
 )
-from timezonefinder import TimezoneFinder
-import matplotlib.pyplot as plt
-import io
-import numpy as np
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+from skymate_client import SkyMate, SkyMateError
+
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-TELEGRAM_BOT_TOKEN = '8036515444:AAGNbimoj96nsCNpUAp-wRs0A2LQh4WAens'
-OPENWEATHER_API_KEY = '0df7dc1b17aae89630b03ee48a0a768c'
-CACHE_EXPIRY = 600
-
-cache = {}
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+DB_PATH = 'bot_data.db'
 DEFAULT_UNITS = 'metric'
+api = SkyMate()
+
 WEATHER_EMOJIS = {
-    'Clear': '☀️', 'Clouds': '☁️', 'Rain': '🌧️', 'Drizzle': '🌦️',
-    'Thunderstorm': '⛈️', 'Snow': '❄️', 'Mist': '🌫️', 'Smoke': '🌫️',
-    'Haze': '🌫️', 'Dust': '🌫️', 'Fog': '🌫️', 'Sand': '🌫️',
-    'Ash': '🌋', 'Squall': '🌬️', 'Tornado': '🌪️',
+    'Clear': '☀️', 'Clouds': '☁️', 'Rain': '🌧️', 'Drizzle': '🌦️', 'Thunderstorm': '⛈️',
+    'Snow': '❄️', 'Mist': '🌫️', 'Fog': '🌫️',
 }
-AQI_DESCRIPTIONS = {
-    1: "Good 😊", 2: "Fair 🙂", 3: "Moderate 😐",
-    4: "Poor 😷", 5: "Very Poor 🤢"
-}
-UV_DESCRIPTIONS = {
-    0: "Low ☀️", 1: "Low ☀️", 2: "Low ☀️",
-    3: "Moderate 🌤️", 4: "Moderate 🌤️", 5: "Moderate 🌤️",
-    6: "High ⛱️", 7: "High ⛱️", 8: "Very High 🚫", 
-    9: "Very High 🚫", 10: "Extreme ☢️"
-}
-tf = TimezoneFinder()
-STATE_ADD_FAVORITE, STATE_REMOVE_FAVORITE, STATE_SUBSCRIBE = range(3)
+NIGHT_EMOJIS = {'Clear': '🌙'}
+EU_AQI = [(20, "Good 😊"), (40, "Fair 🙂"), (60, "Moderate 😐"), (80, "Poor 😷"), (100, "Very poor 🤢"),
+          (10_000, "Extremely poor ☠️")]
+UV_LABELS = {"low": "Low", "moderate": "Moderate 🌤️", "high": "High ⛱️", "very_high": "Very high 🚫",
+             "extreme": "Extreme ☢️"}
+SEVERITY_ICON = {"severe": "🔴", "moderate": "🟠", "minor": "🟡"}
+COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
-def get_cache_key(city: str, units: str) -> str:
-    return f"{city.lower()}_{units}"
+STATE_ADD_FAVORITE, STATE_REMOVE_FAVORITE = range(2)
 
-def is_cache_valid(entry: dict) -> bool:
-    return (datetime.now() - entry['timestamp']) < timedelta(minutes=10)
 
-def format_timestamp(ts: int, tz_offset: int) -> str:
-    local_time = datetime.utcfromtimestamp(ts + tz_offset)
-    return local_time.strftime('%H:%M')
+# ─── Database (per-user settings) ─────────────────────────────────────────────
 
-async def get_weather_data(city: str, units: str):
-    base_url = "https://api.openweathermap.org/data/2.5/weather"
-    params = {
-        'q': city,
-        'appid': OPENWEATHER_API_KEY,
-        'units': units,
-        'lang': 'en',
-    }
-    
+def init_db():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER PRIMARY KEY, units TEXT DEFAULT 'metric')")
+        conn.execute("CREATE TABLE IF NOT EXISTS user_favorites (user_id INTEGER, city TEXT, PRIMARY KEY (user_id, city))")
+        conn.execute("CREATE TABLE IF NOT EXISTS user_subscriptions "
+                     "(user_id INTEGER PRIMARY KEY, chat_id INTEGER, city TEXT, units TEXT)")
+
+def get_user_units(user_id: int) -> str:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute('SELECT units FROM user_settings WHERE user_id=?', (user_id,)).fetchone()
+    return row[0] if row else DEFAULT_UNITS
+
+def set_user_units(user_id: int, units: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute('INSERT OR REPLACE INTO user_settings VALUES (?,?)', (user_id, units))
+
+def get_user_favorites(user_id: int) -> list:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute('SELECT city FROM user_favorites WHERE user_id=? ORDER BY rowid', (user_id,)).fetchall()
+    return [r[0] for r in rows]
+
+def add_user_favorite(user_id: int, city: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute('INSERT OR IGNORE INTO user_favorites VALUES (?,?)', (user_id, city))
+
+def remove_user_favorite(user_id: int, city: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute('DELETE FROM user_favorites WHERE user_id=? AND city=?', (user_id, city))
+
+def get_subscription(user_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute('SELECT chat_id, city, units FROM user_subscriptions WHERE user_id=?', (user_id,)).fetchone()
+    return {'chat_id': row[0], 'city': row[1], 'units': row[2]} if row else None
+
+def get_all_subscriptions():
+    with sqlite3.connect(DB_PATH) as conn:
+        return conn.execute('SELECT user_id, chat_id, city, units FROM user_subscriptions').fetchall()
+
+def save_subscription(user_id: int, chat_id: int, city: str, units: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute('INSERT OR REPLACE INTO user_subscriptions VALUES (?,?,?,?)', (user_id, chat_id, city, units))
+
+def delete_subscription(user_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute('DELETE FROM user_subscriptions WHERE user_id=?', (user_id,))
+
+
+# ─── API access ───────────────────────────────────────────────────────────────
+
+async def call(fn, *args, **kwargs):
+    return await asyncio.to_thread(fn, *args, **kwargs)
+
+
+def where(city=None, lat=None, lon=None) -> dict:
+    return {"q": city} if city else {"lat": lat, "lon": lon}
+
+
+def error_text(e: SkyMateError, what: str = "") -> str:
+    if e.status == 404:
+        return f"❌ {what or 'Location'} not found."
+    if e.status == 0:
+        return "⚠️ Weather service is restarting. Please try again in a minute."
+    return f"❌ {e.message}"
+
+
+# ─── Formatting ───────────────────────────────────────────────────────────────
+
+def _local(iso: str, loc: dict) -> datetime:
+    t = datetime.fromisoformat(iso)
+    tz = pytz.timezone(loc.get("timezone") or "UTC")
+    return t.astimezone(tz)
+
+def _num(v, digits=0):
+    if v is None:
+        return "N/A"
+    return f"{v:.{digits}f}" if digits else f"{round(v)}"
+
+def _compass(deg):
+    return "" if deg is None else COMPASS[int((deg + 22.5) // 45) % 8]
+
+def _emoji(state: dict) -> str:
+    if not state.get("is_day", True) and state.get("condition") in NIGHT_EMOJIS:
+        return NIGHT_EMOJIS[state["condition"]]
+    return WEATHER_EMOJIS.get(state.get("condition"), '🌡')
+
+def _place(loc: dict) -> str:
+    return f"{loc['name']}, {loc['country']}" if loc.get("country") else loc["name"]
+
+def _freshness(meta: dict) -> str:
+    if meta.get("stale"):
+        return f"\n\n⚠️ _Offline mode: forecast issued {round(meta['data_age_hours'])} h ago_"
+    return ""
+
+def format_current(d: dict) -> str:
+    loc, c, u = d["location"], d["current"], d["units"]
+    t, s = u["temperature"], u["speed"]
+    vis = c.get("visibility")
+    vis_txt = (f"{vis / 1000:.0f} km" if u["visibility"] == "m" else f"{vis:.1f} mi") if vis is not None else None
+    gust = f" (gusts {_num(c['wind_gust'])})" if c.get("wind_gust") else ""
+    lines = [
+        f"{_emoji(c)} *{_place(loc)}*",
+        f"_{c['description'].capitalize()}_\n",
+        f"🌡 Temp: *{_num(c['temperature'])}{t}*",
+        f"🤔 Feels like: {_num(c['feels_like'])}{t}",
+        f"💧 Humidity: {_num(c['humidity'])}%",
+        f"💨 Wind: {_num(c['wind_speed'], 1)} {s} {_compass(c.get('wind_direction'))}{gust}",
+        f"🔵 Pressure: {_num(c['pressure'])} hPa",
+        f"👁 Visibility: {vis_txt}" if vis_txt else "",
+        f"☀️ UV index: {c['uv_index']}",
+    ]
+    sun = d.get("sun", {})
+    if sun.get("sunrise") and sun.get("sunset"):
+        lines.append(f"🌅 Sunrise: {_local(sun['sunrise'], loc):%H:%M}  🌇 Sunset: {_local(sun['sunset'], loc):%H:%M}")
+    return "\n".join(l for l in lines if l) + _freshness(d["meta"])
+
+def format_daily(d: dict) -> str:
+    loc, u = d["location"], d["units"]
+    msg = f"📅 *{len(d['daily'])}-Day Forecast — {_place(loc)}*\n\n"
+    for day in d["daily"]:
+        date = datetime.fromisoformat(day["date"])
+        emoji = WEATHER_EMOJIS.get(day["condition"], '🌡')
+        rain = day.get("precipitation_sum") or 0
+        rain_txt = f"  💧 {rain:.1f} {u['precipitation']}" if rain >= 0.1 else ""
+        msg += (f"*{date:%A}* ({date:%d %b}): {emoji} {day['description'].capitalize()}\n"
+                f"  ↓ {_num(day['temp_min'])}{u['temperature']}  ↑ {_num(day['temp_max'])}{u['temperature']}{rain_txt}\n\n")
+    return msg + _freshness(d["meta"]).strip()
+
+def format_hourly(d: dict) -> str:
+    loc, u = d["location"], d["units"]
+    msg = f"⏳ *Next 24 Hours — {_place(loc)}*\n\n"
+    for h in d["hourly"][:9]:
+        msg += (f"{_local(h['time'], loc):%H:%M} {_emoji(h)} {h['description'].capitalize()} — "
+                f"{_num(h['temperature'])}{u['temperature']}\n")
+    return msg + _freshness(d["meta"])
+
+def format_uv(d: dict) -> str:
+    return (f"☀️ *UV Index — {_place(d['location'])}*\n\n"
+            f"Now: *{d['uv_index']}* ({UV_LABELS[d['category']]})\n"
+            f"Today's max: {d['uv_max_today']}")
+
+def format_aqi(d: dict) -> str:
+    aq = d["air_quality"]
+    comp = aq["components"]
+    if aq.get("european_aqi") is not None:
+        label = next(l for limit, l in EU_AQI if aq["european_aqi"] <= limit)
+        head = f"European AQI: *{aq['european_aqi']}* ({label})"
+    else:
+        head = f"Index: *{aq.get('index_1_5')}* / 5"
+    fmt = lambda k: "N/A" if comp.get(k) is None else f"{comp[k]:.1f}"
+    return (f"🌫️ *Air Quality — {_place(d['location'])}*\n\n{head}\n\n"
+            f"PM2.5: `{fmt('pm2_5')}` μg/m³\nPM10:  `{fmt('pm10')}` μg/m³\nNO₂:   `{fmt('no2')}` μg/m³\n"
+            f"SO₂:   `{fmt('so2')}` μg/m³\nCO:    `{fmt('co')}` μg/m³\nO₃:    `{fmt('o3')}` μg/m³")
+
+def format_alerts(d: dict) -> str:
+    loc, u = d["location"], d["units"]
+    if not d["alerts"]:
+        return f"✅ No weather warnings for *{_place(loc)}* in the next 3 days."
+    unit_for = {"temperature": u["temperature"], "wind_gust": f" {u['speed']}",
+                "precipitation_rate": f" {u['precipitation_rate']}"}
+    msg = f"🚨 *Weather Warnings — {_place(loc)}*\n\n"
+    for a in d["alerts"]:
+        start, end = _local(a["start"], loc), _local(a["end"], loc)
+        peak = f"\n   Peak: {_num(a['peak'], 1)}{unit_for.get(a['peak_field'], '')}" if a.get("peak") is not None else ""
+        msg += f"{SEVERITY_ICON[a['severity']]} *{a['event']}*\n   🕒 {start:%a %H:%M} — {end:%a %H:%M}{peak}\n\n"
+    return msg
+
+def weather_buttons(lat: float, lon: float, name: str) -> InlineKeyboardMarkup:
+    p = f"{lat:.3f}:{lon:.3f}"
+    name = name.encode("utf-8")[:48].decode("utf-8", "ignore")
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗺️ Map", callback_data=f'map:{p}'),
+         InlineKeyboardButton("🔄 Refresh", callback_data=f'now:{p}')],
+        [InlineKeyboardButton("⏰ 24h", callback_data=f'hourly:{p}'),
+         InlineKeyboardButton("📅 5-day", callback_data=f'daily:{p}')],
+        [InlineKeyboardButton("💨 AQI", callback_data=f'aqi:{p}'),
+         InlineKeyboardButton("☀️ UV", callback_data=f'uv:{p}')],
+        [InlineKeyboardButton("🚨 Alerts", callback_data=f'alerts:{p}'),
+         InlineKeyboardButton("❤️ Save", callback_data=f'savefav:{name[:40]}')],
+    ])
+
+
+# ─── Generic "city argument" helper ──────────────────────────────────────────
+
+def city_arg(context) -> str | None:
+    return ' '.join(context.args).strip() if context.args else None
+
+
+async def reply_weather(message, user_id: int, city=None, lat=None, lon=None, edit_query=None):
+    units = get_user_units(user_id)
     try:
-        response = requests.get(base_url, params=params, timeout=20) 
-        response.raise_for_status()
-        data = response.json()
-        
-        if data.get('cod') != 200:
-            logger.error(f"API Error: {data.get('message', 'Unknown error')}")
-            return None
-            
-        return data
-        
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            logger.info(f"City not found: {city}")
+        d = await call(api.current, units=units, **where(city, lat, lon))
+    except SkyMateError as e:
+        text = error_text(e, f"*{city}*" if city else "")
+        if e.status == 404 and city:
+            try:
+                hits = await call(api.geocode, city.split(',')[0][:3], 5)
+                if hits:
+                    text += "\n\nDid you mean:\n" + "\n".join(f"• {h['name']}, {h['country']}" for h in hits)
+            except SkyMateError:
+                pass
+        if edit_query:
+            await edit_query.edit_message_text(text, parse_mode='Markdown')
         else:
-            logger.error(f"Weather API HTTP Error: {str(e)}")
-        return None
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Weather API Request Failed: {str(e)}")
-    except json.JSONDecodeError:
-        logger.error("Invalid JSON response from API")
-    except KeyError as e:
-        logger.error(f"Missing key in API response: {str(e)}")
-        
-    return None
+            await message.reply_markdown(text)
+        return
+    loc = d["location"]
+    markup = weather_buttons(loc["lat"], loc["lon"], loc["name"])
+    if edit_query:
+        await edit_query.edit_message_text(format_current(d), parse_mode='Markdown', reply_markup=markup)
+    else:
+        await message.reply_markdown(format_current(d), reply_markup=markup)
 
-async def get_forecast_data(city: str, units: str):
-    base_url = "https://api.openweathermap.org/data/2.5/forecast"
-    params = {'q': city, 'appid': OPENWEATHER_API_KEY, 'units': units, 'lang': 'en'}
-    response = requests.get(base_url, params=params)
-    return response.json() if response.status_code == 200 else None
 
-async def get_air_quality(lat: float, lon: float):
-    base_url = "http://api.openweathermap.org/data/2.5/air_pollution"
-    params = {'lat': lat, 'lon': lon, 'appid': OPENWEATHER_API_KEY}
-    response = requests.get(base_url, params=params)
-    return response.json() if response.status_code == 200 else None
+# ─── Commands ─────────────────────────────────────────────────────────────────
 
-async def get_uv_index(lat: float, lon: float):
-    base_url = "http://api.openweathermap.org/data/2.5/onecall" 
-    params = {'lat': lat, 'lon': lon, 'exclude': 'minutely,hourly,daily,alerts', 'appid': OPENWEATHER_API_KEY}
-    response = requests.get(base_url, params=params)
-    if response.status_code == 200:
-        return {'value': response.json().get('current', {}).get('uvi', 0)}
-    return None
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🌤 Weather", switch_inline_query_current_chat=''),
+         InlineKeyboardButton("📅 Forecast", callback_data='forecast_main')],
+        [InlineKeyboardButton("❤️ Favorites", callback_data='show_favorites'),
+         InlineKeyboardButton("🚨 Alerts", callback_data='alerts_main')],
+        [InlineKeyboardButton("📬 Subscribe", callback_data='subscribe_start'),
+         InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
+    ]
+    await update.message.reply_text(
+        f"👋 Welcome, *{update.effective_user.first_name}*!\n\nSend any city name or use the menu:",
+        parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def get_historical_weather(lat: float, lon: float, dt: int):
-    base_url = "https://api.openweathermap.org/data/2.5/onecall/timemachine"
-    params = {'lat': lat, 'lon': lon, 'dt': dt, 'appid': OPENWEATHER_API_KEY, 'units': DEFAULT_UNITS}
-    response = requests.get(base_url, params=params)
-    return response.json() if response.status_code == 200 else None
+async def location_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reply_kb = [[KeyboardButton("📍 Share Location", request_location=True)]]
+    await update.message.reply_text(
+        "📍 Tap the button to share your location (works on phone only).",
+        reply_markup=ReplyKeyboardMarkup(reply_kb, one_time_keyboard=True, resize_keyboard=True))
 
-async def get_weather_alerts(lat: float, lon: float):
-    base_url = "https://api.openweathermap.org/data/2.5/onecall"
-    params = {'lat': lat, 'lon': lon, 'exclude': 'current,minutely,hourly,daily', 'appid': OPENWEATHER_API_KEY}
-    response = requests.get(base_url, params=params)
-    return response.json().get('alerts', []) if response.status_code == 200 else []
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_markdown(
+        "⚡ *Commands*\n\n"
+        "/weather `<city>` — Current conditions\n"
+        "/forecast `<city>` — 5-day forecast\n"
+        "/week `<city>` — 10-day forecast\n"
+        "/hourly `<city>` — Next 24 hours\n"
+        "/aqi `<city>` — Air quality\n"
+        "/uv `<city>` — UV index\n"
+        "/alerts `<city>` — Weather warnings\n"
+        "/radar `<city>` — Weather map\n"
+        "/history `<city>` — Last 7 days chart\n"
+        "/favorites — Saved locations\n"
+        "/addfavorite — Add a location\n"
+        "/removefavorite — Remove a location\n"
+        "/subscribe — Daily 8 AM updates\n"
+        "/units — Toggle °C / °F\n"
+        "/settings — Preferences\n"
+        "/location — Share your location (phone only)\n\n"
+        "Or just type any city name.")
 
-async def get_city_suggestions(city: str) -> list:
-    url = f"http://api.openweathermap.org/geo/1.0/direct?q={city}&limit=5&appid={OPENWEATHER_API_KEY}"
+async def units_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    new = 'imperial' if get_user_units(uid) == 'metric' else 'metric'
+    set_user_units(uid, new)
+    label = "Imperial (°F, mph)" if new == 'imperial' else "Metric (°C, m/s)"
+    await update.message.reply_text(f"✅ Units set to *{label}*", parse_mode='Markdown')
+
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _send_settings(update.effective_user.id, update.message, edit=False)
+
+async def _send_settings(user_id: int, target, edit: bool):
+    units = get_user_units(user_id)
+    unit_label = "Metric (°C)" if units == 'metric' else "Imperial (°F)"
+    sub = get_subscription(user_id)
+    sub_label = f"📬 {sub['city']} (tap to manage)" if sub else "📬 Not subscribed (tap to subscribe)"
+    keyboard = [[InlineKeyboardButton(f"🌡 {unit_label} — tap to switch", callback_data='toggle_units')],
+                [InlineKeyboardButton(sub_label, callback_data='manage_sub')]]
+    if edit:
+        await target.edit_message_text("⚙️ *Settings*", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await target.reply_text("⚙️ *Settings*", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message or update.edited_message
+    if not message:
+        return
+    if context.args is not None and not context.args:
+        await message.reply_text("Usage: /weather <city>")
+        return
+    raw = city_arg(context) or (message.text or '').strip()
+    if not raw or raw.startswith('/') or raw.startswith('@') or raw == "📍 Share Location":
+        return
+    await reply_weather(message, update.effective_user.id, city=raw)
+
+
+async def _simple(update, context, usage, fn, fmt, **kw):
+    city = city_arg(context)
+    if not city:
+        await update.message.reply_text(f"Usage: {usage} <city>")
+        return
     try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            return [f"{item['name']}, {item.get('state', '')} {item['country']}".strip() for item in response.json()]
-    except Exception as e:
-        logger.error(f"City suggestion error: {str(e)}")
-    return []
+        d = await call(fn, q=city, **kw)
+    except SkyMateError as e:
+        await update.message.reply_markdown(error_text(e, f"*{city}*"))
+        return
+    await update.message.reply_markdown(fmt(d))
 
-async def generate_weather_map(lat: float, lon: float):
-    zoom_level = 10
-    x = int((lon + 180) / 360 * (2 ** zoom_level))
-    y = int((1 - np.log(np.tan(np.radians(lat)) + 1 / np.cos(np.radians(lat))) / np.pi) / 2 * (2 ** zoom_level))
-    tile_url = f"https://tile.openstreetmap.org/{zoom_level}/{x}/{y}.png"
-    
+async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _simple(update, context, "/forecast", api.daily, format_daily, days=5, units=get_user_units(update.effective_user.id))
+
+async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _simple(update, context, "/week", api.daily, format_daily, days=10, units=get_user_units(update.effective_user.id))
+
+async def hourly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _simple(update, context, "/hourly", api.hourly, format_hourly, hours=24, units=get_user_units(update.effective_user.id))
+
+async def aqi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _simple(update, context, "/aqi", api.air_quality, format_aqi)
+
+async def uv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _simple(update, context, "/uv", api.uv, format_uv)
+
+async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _simple(update, context, "/alerts", api.alerts, format_alerts, units=get_user_units(update.effective_user.id))
+
+
+async def send_map(message, city=None, lat=None, lon=None):
     try:
-        response = requests.get(tile_url, timeout=10)
-        return response.content if response.status_code == 200 else None
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Map tile request failed: {str(e)}")
-        return None
+        png = await call(api.map_png, **where(city, lat, lon))
+    except SkyMateError as e:
+        await message.reply_text(error_text(e) if e.status != 503 else "🗺️ Map will be available once the first forecast download completes.")
+        return
+    await message.reply_photo(photo=png, caption=f"🗺️ Temperature & wind{' — ' + city if city else ''}")
 
-# --- Formatting Functions ---
+async def radar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    city = city_arg(context)
+    if not city:
+        await update.message.reply_text("Usage: /radar <city>")
+        return
+    await send_map(update.message, city=city)
 
-async def format_weather_message(data: dict, units: str) -> str:
-    main = data.get('main', {})
-    weather = data.get('weather', [{}])[0]
-    wind = data.get('wind', {})
-    
-    temp = main.get('temp')
-    feels_like = main.get('feels_like')
-    humidity = main.get('humidity')
-    wind_speed = wind.get('speed')
-    description = weather.get('description', '').capitalize()
-    emoji = WEATHER_EMOJIS.get(weather.get('main', ''), '')
-    
-    unit_temp = "°C" if units == "metric" else "°F"
-    unit_speed = "m/s" if units == "metric" else "mph"
-    
-    temp_str = f"{temp}{unit_temp}" if temp is not None else "N/A"
-    feels_like_str = f"{feels_like}{unit_temp}" if feels_like is not None else "N/A"
-    humidity_str = f"{humidity}%" if humidity is not None else "N/A"
-    wind_speed_str = f"{wind_speed}{unit_speed}" if wind_speed is not None else "N/A"
-    
-    message = (
-        f"{emoji} *{data['name']}*\n"
-        f"{description}\n\n"
-        f"🌡 Temp: {temp_str}\n"
-        f"💨 Wind: {wind_speed_str}\n"
-        f"💧 Humidity: {humidity_str}\n"
-        f"🌡 Feels like: {feels_like_str}"
-    )
-    return message
-
-async def format_forecast_message(data: dict, units: str) -> str:
-    city = data.get('city', {}).get('name', 'Unknown')
-    forecasts = data.get('list', [])
-    unit_temp = "°C" if units == "metric" else "°F"
-    message = f"📅 5-day forecast for *{city}*:\n\n"
-    days = {}
-    for f in forecasts:
-        dt_txt = f['dt_txt']
-        date = dt_txt.split(' ')[0]
-        if date not in days:
-            days[date] = []
-        days[date].append(f)
-    count = 0
-    for date, day_forecasts in days.items():
-        if count >= 5:
-            break
-        
-        temps = [f['main']['temp'] for f in day_forecasts if f.get('main', {}).get('temp') is not None]
-        if not temps:
-            continue
-        
-        min_temp = min(temps)
-        max_temp = max(temps)
-        
-        noon_forecast = min(day_forecasts, key=lambda x: abs(int(x['dt_txt'][11:13]) - 12))
-        
-        main_condition = noon_forecast.get('weather', [{}])[0].get('main', '')
-        desc = noon_forecast.get('weather', [{}])[0].get('description', '').capitalize()
-        emoji = WEATHER_EMOJIS.get(main_condition, '')
-        
-        try:
-            date_obj = datetime.strptime(date, '%Y-%m-%d')
-            day_name = date_obj.strftime('%A')
-        except ValueError:
-            day_name = "Date Unknown"
-            
-        message += (
-            f"*{day_name}* ({date}): {emoji} {desc}\n"
-            f"🌡 Min: {min_temp}{unit_temp}, Max: {max_temp}{unit_temp}\n\n"
-        )
-        count += 1
-    return message
-
-async def format_hourly_forecast(data: dict, units: str) -> str:
-    forecast_list = data.get('list', [])[:8] 
-    message = "⏳ *Next 24 Hours*\n\n"
-    unit_temp = "°C" if units == "metric" else "°F"
-    
-    for f in forecast_list:
-        try:
-            dt = datetime.fromtimestamp(f['dt'])
-            temp = f['main']['temp']
-            weather = f['weather'][0]
-            emoji = WEATHER_EMOJIS.get(weather['main'], '')
-            message += (
-                f"{dt.strftime('%H:%M')} {emoji} {weather['description'].capitalize()} "
-                f"- {temp}{unit_temp}\n"
-            )
-        except (KeyError, ValueError):
-            continue
-            
-    return message
-
-async def format_uv_message(uv_data: dict) -> str:
-    uv_index = uv_data.get('value', 0)
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    city = city_arg(context)
+    if not city:
+        await update.message.reply_text("Usage: /history <city>")
+        return
+    units = get_user_units(update.effective_user.id)
     try:
-        key = int(uv_index)
-    except (TypeError, ValueError):
-        key = 0
-        
-    description = UV_DESCRIPTIONS.get(key, "Unknown")
-    return f"☀️ UV Index: {uv_index} ({description})"
+        d = await call(api.history, q=city, days=7, units=units)
+    except SkyMateError as e:
+        await update.message.reply_markdown(error_text(e, f"*{city}*"))
+        return
+    pts = [(_local(p["time"], d["location"]), p["temperature"]) for p in d["history"] if p["temperature"] is not None]
+    if len(pts) < 2:
+        await update.message.reply_text("❌ Not enough historical data yet.")
+        return
+    times, temps = zip(*pts)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(times, temps, color='#4fc3f7', linewidth=1.8, marker='o', ms=2)
+    ax.fill_between(times, temps, min(temps), alpha=0.2, color='#4fc3f7')
+    fig.autofmt_xdate()
+    ax.set_ylabel(f"Temperature ({d['units']['temperature']})")
+    ax.set_title(f"Last 7 days — {_place(d['location'])}")
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=120)
+    plt.close(fig)
+    buf.seek(0)
+    await update.message.reply_photo(photo=buf, caption=f"📈 Last 7 days — {_place(d['location'])}")
 
-async def format_aqi_message(aqi_data: dict) -> str:
-    try:
-        aqi = aqi_data['list'][0]['main']['aqi']
-        components = aqi_data['list'][0]['components']
-    except (IndexError, KeyError):
-        return "AQI data structure is incomplete or malformed."
 
-    desc = AQI_DESCRIPTIONS.get(aqi, "Unknown")
-    
-    pm2_5 = components.get('pm2_5', 'N/A')
-    no2 = components.get('no2', 'N/A')
-    so2 = components.get('so2', 'N/A')
-    
-    return (
-        f"🌫️ Air Quality\n"
-        f"Index: {aqi} ({desc})\n"
-        f"PM2.5: {pm2_5} μg/m³\n"
-        f"NO2: {no2} μg/m³\n"
-        f"SO2: {so2} μg/m³"
-    )
+# ─── Favorites ────────────────────────────────────────────────────────────────
 
-async def format_alerts(alerts: list) -> str:
-    if not alerts:
-        return "No active weather alerts ⛅"
-    message = "🚨 *Weather Alerts*\n\n"
-    for alert in alerts:
-        event = alert.get('event', 'N/A')
-        start_ts = alert.get('start')
-        end_ts = alert.get('end')
-        description = alert.get('description', 'No details provided.')
+def favorites_markup(uid: int):
+    favs = get_user_favorites(uid)
+    kb = [[InlineKeyboardButton(f"🌤 {c}", callback_data=f'fav:{i}')] for i, c in enumerate(favs)]
+    kb.append([InlineKeyboardButton("➕ Add", callback_data='add_fav_inline')] +
+              ([InlineKeyboardButton("➖ Remove", callback_data='remove_fav_inline')] if favs else []))
+    return favs, InlineKeyboardMarkup(kb)
 
-        start_time = datetime.fromtimestamp(start_ts) if start_ts else 'Unknown'
-        end_time = datetime.fromtimestamp(end_ts) if end_ts else 'Unknown'
-
-        message += (
-            f"⚠️ {event}\n"
-            f"🕒 {start_time} - {end_time}\n"
-            f"{description}\n\n"
-        )
-    return message
-
-def normalize_city_name(city: str) -> str:
-    replacements = {
-        'ç': 'c', 'ğ': 'g', 'ı': 'i', 'ö': 'o', 'ş': 's', 'ü': 'u',
-        'Ç': 'C', 'Ğ': 'G', 'İ': 'I', 'Ö': 'O', 'Ş': 'S', 'Ü': 'U'
-    }
-    return ''.join([replacements.get(c, c) for c in city.strip().title()])
-
-# --- Conversation Handler Functions ---
+async def favorites_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    favs, markup = favorites_markup(update.effective_user.id)
+    await update.message.reply_text("❤️ *Favorites:*" if favs else "No favorites yet.", parse_mode='Markdown',
+                                    reply_markup=markup)
 
 async def add_favorite_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Enter a city name to add to favorites:")
+    await update.message.reply_text("🏙️ Enter city name to add:")
     return STATE_ADD_FAVORITE
 
+async def _add_favorite(message, uid: int, raw: str):
+    try:
+        hits = await call(api.geocode, raw, 1)
+    except SkyMateError as e:
+        await message.reply_text(error_text(e))
+        return
+    if not hits:
+        await message.reply_markdown(f"❌ *{raw}* not found.")
+        return
+    name = hits[0]["name"]
+    add_user_favorite(uid, name)
+    await message.reply_markdown(f"✅ *{name}, {hits[0]['country']}* added to favorites!")
+
 async def add_favorite_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    city = update.message.text
-    user_data = context.user_data
-    user_data.setdefault('favorites', []).append(city)
-    await update.message.reply_text(f"Added {city} to favorites!", reply_markup=ReplyKeyboardRemove())
+    await _add_favorite(update.message, update.effective_user.id, update.message.text.strip())
     return ConversationHandler.END
 
 async def remove_favorite_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = context.user_data
-    favorites = user_data.get('favorites', [])
-    
-    if not favorites:
+    favs = get_user_favorites(update.effective_user.id)
+    if not favs:
         await update.message.reply_text("No favorites to remove.", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
-    
-    keyboard = [[city] for city in favorites]
-    await update.message.reply_text(
-        "Select a city to remove:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, selective=True)
-    )
+    await update.message.reply_text("Select city to remove:",
+                                    reply_markup=ReplyKeyboardMarkup([[c] for c in favs], one_time_keyboard=True))
     return STATE_REMOVE_FAVORITE
 
 async def remove_favorite_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    city = update.message.text
-    user_data = context.user_data
-    try:
-        user_data['favorites'].remove(city)
-        await update.message.reply_text(f"Removed {city} from favorites!", reply_markup=ReplyKeyboardRemove())
-    except ValueError:
-        await update.message.reply_text("City not found in favorites.", reply_markup=ReplyKeyboardRemove())
+    city = update.message.text.strip()
+    remove_user_favorite(update.effective_user.id, city)
+    await update.message.reply_text(f"✅ *{city}* removed.", parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-# --- Command and Handler Logic ---
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Inline Keyboard for main commands
-    inline_keyboard = [
-        [InlineKeyboardButton("🌤 Current Weather", switch_inline_query_current_chat='weather_query')],
-        [InlineKeyboardButton("📅 Forecast", callback_data='forecast_main'),
-         InlineKeyboardButton("⚙ Settings", callback_data='settings')],
-        [InlineKeyboardButton("❤ Favorites", callback_data='favorites'),
-         InlineKeyboardButton("🚨 Alerts", callback_data='alerts')]
-    ]
-    inline_markup = InlineKeyboardMarkup(inline_keyboard)
-
-    # Reply Keyboard for location (user friendly on mobile)
-    reply_keyboard = [
-        [KeyboardButton("📍 Share Current Location", request_location=True)]
-    ]
-    reply_markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
-
-    await update.message.reply_text(
-        f"👋 Welcome {update.effective_user.first_name}!\n\n"
-        "Please use the button below to share your current location, or choose an option:",
-        reply_markup=reply_markup
-    )
-    
-    # Send a separate message for the main command buttons (inline keyboard)
-    await update.message.reply_text(
-        "⚡ Quick access menu:",
-        reply_markup=inline_markup
-    )
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop('awaiting', None)
+    await update.message.reply_text("Cancelled.", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "⚡ *Available Commands* ⚡\n\n"
-        "/start - Initialize bot\n"
-        "/help - Show commands\n"
-        "/weather <city> - Current conditions\n"
-        "/forecast <city> - 5-day forecast\n"
-        "/hourly <city> - 24-hour forecast\n"
-        "/radar <city> - Precipitation map\n"
-        "/aqi <city> - Air quality info\n"
-        "/uv <city> - UV index\n"
-        "/alerts <city> - Weather alerts\n"
-        "/favorites - Saved locations\n"
-        "/subscribe - Daily updates\n"
-        "/units - Toggle metric/imperial\n"
-        "/history <city> - Past weather data\n"
-        "/settings - Configure preferences"
-    )
-    await update.message.reply_markdown(help_text)
-
-async def units_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = context.user_data
-    current_units = user_data.get('units', DEFAULT_UNITS)
-    new_units = 'imperial' if current_units == 'metric' else 'metric'
-    user_data['units'] = new_units
-    unit_name = "Imperial (°F)" if new_units == 'imperial' else "Metric (°C)"
-    await update.message.reply_text(f"Units switched to: {unit_name}")
-
-async def send_weather_response(update: Update, data: dict, units: str):
-    message = await format_weather_message(data, units)
-    city_name = data.get('name', 'city')
-    coord = data.get('coord', {})
-    
-    buttons = []
-    if coord.get('lat') and coord.get('lon'):
-        buttons.append([InlineKeyboardButton("🗺️ Map", callback_data=f'map_{coord["lat"]}_{coord["lon"]}')])
-    
-    buttons.extend([
-        [InlineKeyboardButton("⏰ 24h", callback_data=f'hourly_{city_name}'),
-         InlineKeyboardButton("📅 5-day", callback_data=f'forecast_{city_name}')],
-        [InlineKeyboardButton("💨 AQI", callback_data=f'aqi_{city_name}')]
-    ])
-    
-    await update.message.reply_markdown(
-        message,
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
-
-async def weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message if update.message else update.edited_message
-    
-    # 1. Determine the raw city name safely
-    if context.args:
-        raw_city = ' '.join(context.args)
-    elif message and message.text:
-        raw_city = message.text.strip()
-    else:
-        logger.warning("Weather command called without arguments or message text.")
-        return
-
-    # 2. Safely check for bot mentions/inline query placeholders
-    # FIX: Use 'if context.args is None' to handle the case where MessageHandler is triggered
-    # and context.args is truly None (though it should be [])
-    args_is_empty = not context.args 
-    
-    if raw_city.startswith('@') and ('weather_query' in raw_city.lower()):
-        logger.info(f"Ignoring bot mention/inline query text: {raw_city}")
-        return
-
-    # Check for empty input or "Share Current Location" text from ReplyKeyboardMarkup
-    if not raw_city or raw_city.startswith('/') or raw_city == "📍 Share Current Location":
-        return
-
-    city = normalize_city_name(raw_city)
-    
-    logger.info(f"Weather request received for: {city}")
-    
-    units = context.user_data.get('units', DEFAULT_UNITS)
-    cache_key = get_cache_key(city, units)
-    
-    data = None
-    if cache_key in cache and time.time() - cache[cache_key]['timestamp'] < CACHE_EXPIRY:
-        data = cache[cache_key]['data']
-    
-    if not data:
-        data = await get_weather_data(city, units)
-        if not data:
-            suggestions = await get_city_suggestions(city)
-            error_msg = f"'{raw_city}' not found."
-            if suggestions:
-                error_msg += "\n\nSimilar cities:\n" + "\n".join(suggestions)
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=error_msg,
-                reply_markup=ReplyKeyboardRemove() # Remove keyboard after an error
-            )
-            return
-        cache[cache_key] = {'data': data, 'timestamp': time.time()}
-    
-    await send_weather_response(update, data, units)
-    # Ensure the ReplyKeyboardMarkup is removed after a successful command
-    await update.message.reply_text("Here is your weather report.", reply_markup=ReplyKeyboardRemove())
-
-
-async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    city = ' '.join(context.args) if context.args else None
-    if not city:
-        await update.message.reply_text("Please specify a city.")
-        return
-    
-    city = normalize_city_name(city)
-    units = context.user_data.get('units', DEFAULT_UNITS)
-    data = await get_forecast_data(city, units)
-    
-    if not data or data.get('cod') != '200':
-        await update.message.reply_text(f"Forecast unavailable for {city}.")
-        return
-    
-    forecast_message = await format_forecast_message(data, units)
-    await update.message.reply_markdown(forecast_message)
-
-async def hourly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    city = ' '.join(context.args) if context.args else None
-    if not city:
-        await update.message.reply_text("Please specify a city.")
-        return
-    
-    city = normalize_city_name(city)
-    units = context.user_data.get('units', DEFAULT_UNITS)
-    data = await get_forecast_data(city, units)
-    
-    if not data or data.get('cod') != '200':
-        await update.message.reply_text(f"Hourly forecast unavailable for {city}.")
-        return
-    
-    hourly_message = await format_hourly_forecast(data, units)
-    await update.message.reply_markdown(hourly_message)
-
-async def aqi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    city = ' '.join(context.args) if context.args else None
-    if not city:
-        await update.message.reply_text("Please specify a city.")
-        return
-    
-    city = normalize_city_name(city)
-    data = await get_weather_data(city, DEFAULT_UNITS)
-    if not data or data.get('cod') != 200 or not data.get('coord'):
-        await update.message.reply_text("Location not found.")
-        return
-    
-    coord = data.get('coord')
-    aqi_data = await get_air_quality(coord['lat'], coord['lon'])
-    
-    if not aqi_data or 'list' not in aqi_data:
-        await update.message.reply_text("AQI data unavailable.")
-        return
-    
-    aqi_message = await format_aqi_message(aqi_data)
-    await update.message.reply_markdown(aqi_message)
-
-async def uv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    city = ' '.join(context.args) if context.args else None
-    if not city:
-        await update.message.reply_text("Please specify a city.")
-        return
-    
-    city = normalize_city_name(city)
-    data = await get_weather_data(city, DEFAULT_UNITS)
-    if not data or data.get('cod') != 200 or not data.get('coord'):
-        await update.message.reply_text("Location not found.")
-        return
-    
-    coord = data.get('coord')
-    uv_data = await get_uv_index(coord['lat'], coord['lon'])
-    
-    if not uv_data:
-        await update.message.reply_text("UV data unavailable.")
-        return
-    
-    uv_message = await format_uv_message(uv_data)
-    await update.message.reply_markdown(uv_message)
-
-async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    city = ' '.join(context.args) if context.args else None
-    if not city:
-        await update.message.reply_text("Please specify a city.")
-        return
-    
-    city = normalize_city_name(city)
-    data = await get_weather_data(city, DEFAULT_UNITS)
-    if not data or data.get('cod') != 200 or not data.get('coord'):
-        await update.message.reply_text("Location not found.")
-        return
-    
-    coord = data.get('coord')
-    alerts = await get_weather_alerts(coord['lat'], coord['lon'])
-    alerts_message = await format_alerts(alerts)
-    await update.message.reply_markdown(alerts_message)
-
-async def radar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    city = ' '.join(context.args) if context.args else None
-    if not city:
-        await update.message.reply_text("Please specify a city.")
-        return
-    
-    city = normalize_city_name(city)
-    data = await get_weather_data(city, DEFAULT_UNITS)
-    if not data or data.get('cod') != 200 or not data.get('coord'):
-        await update.message.reply_text("Location not found.")
-        return
-    
-    coord = data.get('coord')
-    map_image = await generate_weather_map(coord['lat'], coord['lon'])
-    
-    if map_image:
-        await update.message.reply_photo(photo=map_image, caption="📍 Weather Map")
-    else:
-        await update.message.reply_text("Map unavailable.")
-
-async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    city = ' '.join(context.args) if context.args else None
-    if not city:
-        await update.message.reply_text("Please specify a city.")
-        return
-    
-    city = normalize_city_name(city)
-    data = await get_weather_data(city, DEFAULT_UNITS)
-    if not data or data.get('cod') != 200 or not data.get('coord'):
-        await update.message.reply_text("Location not found.")
-        return
-    
-    coord = data.get('coord')
-    try:
-        tz = tf.timezone_at(lat=coord['lat'], lng=coord['lon'])
-        if not tz: tz = 'UTC'
-        
-        now = datetime.now(pytz.timezone(tz))
-        target_day = now - timedelta(days=7)
-        dt_target = int(target_day.timestamp())
-        
-        historical_data = await get_historical_weather(coord['lat'], coord['lon'], dt_target)
-        
-        if not historical_data or 'hourly' not in historical_data:
-            await update.message.reply_text("Historical data unavailable for that date.")
-            return
-        
-        hourly_records = historical_data['hourly']
-        temps = [h['temp'] for h in hourly_records if 'temp' in h]
-        times = [datetime.fromtimestamp(h['dt']).strftime('%H:%M') for h in hourly_records if 'dt' in h]
-
-        if not temps:
-            await update.message.reply_text("No temperature data available for plotting.")
-            return
-
-        plt.figure(figsize=(10, 5))
-        plt.plot(times, temps, marker='o')
-        plt.xticks(rotation=45, ha='right')
-        plt.xlabel("Time (Hourly)")
-        plt.ylabel(f"Temperature (°C)")
-        plt.title(f"24-Hour Temperature for {city} ({target_day.strftime('%Y-%m-%d')})")
-        plt.grid(True)
-        plt.tight_layout()
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        plt.close()
-        buf.seek(0)
-        
-        await update.message.reply_photo(photo=buf, caption=f"📈 Historical Data for {city}")
-        
-    except Exception as e:
-        logger.error(f"Historical data error: {str(e)}")
-        await update.message.reply_text("Error processing historical data.")
-
-
-async def weather_by_coords(message_obj, context: ContextTypes.DEFAULT_TYPE, lat: float, lon: float, city_name: str):
-    units = context.user_data.get('units', DEFAULT_UNITS)
-    
-    weather_url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}&units={units}"
-    
-    try:
-        response = requests.get(weather_url)
-        if response.status_code == 200:
-            data = response.json()
-            data['name'] = city_name
-            
-            message = await format_weather_message(data, units)
-            city_for_buttons = data.get('name', 'city')
-            
-            buttons = []
-            if data.get('coord', {}).get('lat') and data.get('coord', {}).get('lon'):
-                buttons.append([InlineKeyboardButton("🗺️ Map", callback_data=f'map_{lat}_{lon}')])
-            buttons.extend([
-                [InlineKeyboardButton("⏰ 24h", callback_data=f'hourly_{city_for_buttons}'),
-                 InlineKeyboardButton("📅 5-day", callback_data=f'forecast_{city_for_buttons}')],
-                [InlineKeyboardButton("💨 AQI", callback_data=f'aqi_{city_for_buttons}')]
-            ])
-            
-            # Send the weather report and remove the ReplyKeyboardMarkup (location button)
-            await message_obj.reply_markdown(
-                message,
-                reply_markup=InlineKeyboardMarkup(buttons)
-            )
-            await message_obj.reply_text("Location received.", reply_markup=ReplyKeyboardRemove())
-
-
-        else:
-            await message_obj.reply_text(f"Weather data unavailable: {response.status_code}")
-    except Exception as e:
-        logger.error(f"Coordinate-based weather error: {str(e)}")
-        await message_obj.reply_text("Error fetching weather data.")
-
-async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        location = update.message.location
-        lat, lon = location.latitude, location.longitude
-        
-        reverse_geo_url = f"http://api.openweathermap.org/geo/1.0/reverse?lat={lat}&lon={lon}&limit=1&appid={OPENWEATHER_API_KEY}"
-        geo_response = requests.get(reverse_geo_url)
-        
-        city_name = "Your Location"
-        if geo_response.status_code == 200 and geo_response.json():
-            city_data = geo_response.json()[0]
-            city_name = f"{city_data.get('name', city_data.get('local_names', {}).get('en', 'Unknown'))}, {city_data.get('country', '')}"
-            city_name = city_name.strip(', ')
-
-        await weather_by_coords(update.message, context, lat, lon, city_name)
-
-    except Exception as e:
-        logger.error(f"Location processing error: {str(e)}")
-        await update.message.reply_text("Error processing location data.")
-
-async def favorites_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = context.user_data
-    favorites = user_data.get('favorites', [])
-    
-    if not favorites:
-        keyboard = [[InlineKeyboardButton("➕ Add Favorite", callback_data='add_fav')]] 
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="No saved favorites. Add one to see it here.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
-    
-    keyboard = [
-        [InlineKeyboardButton(city, callback_data=f'fav_{city}')]
-        for city in favorites
-    ]
-    keyboard.append([InlineKeyboardButton("➕ Add", callback_data='add_fav'),
-                     InlineKeyboardButton("➖ Remove", callback_data='remove_fav')])
-    
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="❤️ Favorite Locations:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-async def send_daily_update(context: ContextTypes.DEFAULT_TYPE):
-    job = context.job
-    data = await get_weather_data(job.data['city'], job.data['units'])
-    if data:
-        message = await format_weather_message(data, job.data['units'])
-        await context.bot.send_message(job.chat_id, text=message, parse_mode='Markdown')
+# ─── Subscriptions ────────────────────────────────────────────────────────────
 
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("✅ Subscribe", callback_data='subscribe'),
-                 InlineKeyboardButton("❌ Unsubscribe", callback_data='unsubscribe')]]
-    await update.message.reply_text(
-        "Receive daily weather updates:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    chat_id_str = str(query.message.chat_id)
-    job_name = f'daily_update_{chat_id_str}'
-    
-    if query.data == 'subscribe':
-        city_to_subscribe = 'London'
-        
-        current_jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in current_jobs:
-            job.schedule_removal()
-
-        context.job_queue.run_repeating(
-            send_daily_update,
-            interval=86400,
-            first=datetime.now(pytz.utc).replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=1),
-            data={'city': city_to_subscribe, 'units': 'metric'},
-            chat_id=query.message.chat_id,
-            name=job_name
-        )
-        await query.edit_message_text(f"Subscribed to daily updates for {city_to_subscribe} at 8 AM UTC!")
+    sub = get_subscription(update.effective_user.id)
+    if sub:
+        text = f"📬 Subscribed for *{sub['city']}* at 8 AM UTC."
+        kb = [[InlineKeyboardButton("🔄 Change city", callback_data='subscribe_start'),
+               InlineKeyboardButton("❌ Unsubscribe", callback_data='unsubscribe')]]
     else:
-        current_jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in current_jobs:
-            job.schedule_removal()
-        await query.edit_message_text("Unsubscribed from updates.")
+        text = "📬 Subscribe to a daily weather report at 8 AM UTC."
+        kb = [[InlineKeyboardButton("✅ Subscribe", callback_data='subscribe_start')]]
+    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+
+async def send_daily_update(context):
+    job = context.job
+    try:
+        now = await call(api.current, q=job.data['city'], units=job.data['units'])
+        alerts = await call(api.alerts, q=job.data['city'], units=job.data['units'])
+    except SkyMateError as e:
+        logger.warning("Daily update for %s failed: %s", job.data['city'], e)
+        return
+    msg = "🌅 *Good morning! Your daily weather*\n\n" + format_current(now)
+    if alerts["alerts"]:
+        msg += "\n\n" + format_alerts(alerts)
+    await context.bot.send_message(job.chat_id, text=msg, parse_mode='Markdown')
+
+def _next_8am():
+    t = datetime.now(timezone.utc).replace(hour=8, minute=0, second=0, microsecond=0)
+    return t if t > datetime.now(timezone.utc) else t + timedelta(days=1)
+
+def schedule_daily(job_queue, uid, chat_id, city, units):
+    for job in job_queue.get_jobs_by_name(f'daily_{uid}'):
+        job.schedule_removal()
+    job_queue.run_repeating(send_daily_update, interval=86400, first=_next_8am(),
+                            data={'city': city, 'units': units}, chat_id=chat_id, name=f'daily_{uid}')
+
+
+# ─── Location ─────────────────────────────────────────────────────────────────
+
+async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    loc = update.message.location
+    await update.message.reply_text("📍 Location received.", reply_markup=ReplyKeyboardRemove())
+    await reply_weather(update.message, update.effective_user.id, lat=loc.latitude, lon=loc.longitude)
+
+
+# ─── Buttons ──────────────────────────────────────────────────────────────────
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    d = query.data
+    uid = query.from_user.id
+
+    if d.startswith('savefav:'):
+        name = d.split(':', 1)[1]
+        add_user_favorite(uid, name)
+        await query.answer(f"❤️ {name} saved!", show_alert=True)
+        return
     await query.answer()
-    
-    data = query.data
-    
-    if data == 'favorites':
-        # Need to simulate a command update for favorites_command if called from a query
-        # Since we cannot create a new Update object easily, we'll route to message.reply_text 
-        # to prompt the user to use the command, or adjust favorites_command to accept a query.
-        # Sticking to the command pattern for cleaner conversation flow.
-        await query.message.reply_text("Please use the /favorites command to manage locations.")
-        return
 
-    elif data == 'add_fav':
-        await query.message.reply_text("Please use the command /addfavorite to add a new location.")
-        return
-    elif data == 'remove_fav':
-        await query.message.reply_text("Please use the command /removefavorite to delete a location.")
-        return
-    elif data == 'subscribe' or data == 'unsubscribe':
-        await subscribe_callback(update, context)
-        return
-    elif data == 'forecast_main' or data == 'settings' or data == 'alerts':
-        await query.message.reply_text(f"Button '{data}' pressed. Functionality not yet fully implemented.")
-        return
-    
-    if data.startswith('forecast_'):
-        city = data.split('_', 1)[1]
-        units = context.user_data.get('units', DEFAULT_UNITS)
-        forecast_data = await get_forecast_data(city, units)
-        if forecast_data and forecast_data.get('cod') == '200':
-            message = await format_forecast_message(forecast_data, units)
-            await query.edit_message_text(message, parse_mode='Markdown')
+    if d == 'settings':
+        await _send_settings(uid, query, edit=True)
+    elif d == 'toggle_units':
+        set_user_units(uid, 'imperial' if get_user_units(uid) == 'metric' else 'metric')
+        await _send_settings(uid, query, edit=True)
+    elif d == 'manage_sub':
+        sub = get_subscription(uid)
+        if sub:
+            text = f"📬 Subscribed for *{sub['city']}* at 8 AM UTC."
+            kb = [[InlineKeyboardButton("🔄 Change city", callback_data='subscribe_start'),
+                   InlineKeyboardButton("❌ Unsubscribe", callback_data='unsubscribe')],
+                  [InlineKeyboardButton("⬅️ Back", callback_data='settings')]]
         else:
-            await query.edit_message_text(f"Forecast unavailable for {city}.")
-            
-    elif data.startswith('hourly_'):
-        city = data.split('_', 1)[1]
-        units = context.user_data.get('units', DEFAULT_UNITS)
-        forecast_data = await get_forecast_data(city, units)
-        if forecast_data and forecast_data.get('cod') == '200':
-            message = await format_hourly_forecast(forecast_data, units)
-            await query.edit_message_text(message, parse_mode='Markdown')
-        else:
-            await query.edit_message_text(f"Hourly forecast unavailable for {city}.")
-            
-    elif data.startswith('aqi_'):
-        city = data.split('_', 1)[1]
-        weather_data = await get_weather_data(city, DEFAULT_UNITS)
-        if weather_data and weather_data.get('cod') == 200 and weather_data.get('coord'):
-            coord = weather_data.get('coord')
-            aqi_data = await get_air_quality(coord['lat'], coord['lon'])
-            if aqi_data and 'list' in aqi_data:
-                message = await format_aqi_message(aqi_data)
-                await query.edit_message_text(message, parse_mode='Markdown')
-            else:
-                await query.edit_message_text(f"AQI data unavailable for {city}.")
-        else:
-            await query.edit_message_text(f"Location data not found for AQI check on {city}.")
-            
-    elif data.startswith('map_'):
-        lat, lon = float(data.split('_')[1]), float(data.split('_')[2])
-        map_image = await generate_weather_map(lat, lon)
-        if map_image:
-            await query.message.reply_photo(photo=map_image, caption="📍 Weather Map")
-        else:
-            await query.message.reply_text("Map unavailable.")
-            
-    elif data.startswith('fav_'):
-        city = data.split('_', 1)[1]
-        units = context.user_data.get('units', DEFAULT_UNITS)
-        weather_data = await get_weather_data(city, units)
-        if weather_data and weather_data.get('cod') == 200:
-            message = await format_weather_message(weather_data, units)
-            
-            city_name = weather_data.get('name', city)
-            coord = weather_data.get('coord', {})
-            buttons = []
-            if coord.get('lat') and coord.get('lon'):
-                buttons.append([InlineKeyboardButton("🗺️ Map", callback_data=f'map_{coord["lat"]}_{coord["lon"]}')])
-            buttons.extend([
-                [InlineKeyboardButton("⏰ 24h", callback_data=f'hourly_{city_name}'),
-                 InlineKeyboardButton("📅 5-day", callback_data=f'forecast_{city_name}')],
-                [InlineKeyboardButton("💨 AQI", callback_data=f'aqi_{city_name}')]
-            ])
-            
-            await query.edit_message_text(message, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
-        else:
-            await query.edit_message_text(f"Weather data for favorite city {city} is unavailable.")
+            text = "📬 No active subscription."
+            kb = [[InlineKeyboardButton("✅ Subscribe", callback_data='subscribe_start')],
+                  [InlineKeyboardButton("⬅️ Back", callback_data='settings')]]
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+    elif d == 'show_favorites':
+        favs, markup = favorites_markup(uid)
+        await query.message.reply_text("❤️ *Favorites:*" if favs else "No favorites yet.", parse_mode='Markdown',
+                                       reply_markup=markup)
+    elif d == 'add_fav_inline':
+        context.user_data['awaiting'] = 'add_fav'
+        await query.message.reply_text("🏙️ Send the city name to save:")
+    elif d == 'remove_fav_inline':
+        favs = get_user_favorites(uid)
+        kb = [[InlineKeyboardButton(f"✕ {c}", callback_data=f'delfav:{i}')] for i, c in enumerate(favs)]
+        await query.message.reply_text("Tap a city to remove:" if favs else "No favorites to remove.",
+                                       reply_markup=InlineKeyboardMarkup(kb) if kb else None)
+    elif d.startswith('delfav:'):
+        favs = get_user_favorites(uid)
+        i = int(d.split(':')[1])
+        if i < len(favs):
+            remove_user_favorite(uid, favs[i])
+            await query.edit_message_text(f"✅ *{favs[i]}* removed.", parse_mode='Markdown')
+    elif d.startswith('fav:'):
+        favs = get_user_favorites(uid)
+        i = int(d.split(':')[1])
+        if i < len(favs):
+            await reply_weather(query.message, uid, city=favs[i], edit_query=query)
+    elif d == 'forecast_main':
+        context.user_data['awaiting'] = 'forecast'
+        await query.message.reply_text("🏙️ Send a city name for the forecast:")
+    elif d == 'alerts_main':
+        context.user_data['awaiting'] = 'alerts'
+        await query.message.reply_text("🏙️ Send a city name for weather warnings:")
+    elif d == 'subscribe_start':
+        context.user_data['awaiting'] = 'subscribe_city'
+        context.user_data['sub_chat_id'] = query.message.chat_id
+        await query.message.reply_text("🏙️ Which city do you want daily updates for?")
+    elif d == 'unsubscribe':
+        for job in context.job_queue.get_jobs_by_name(f'daily_{uid}'):
+            job.schedule_removal()
+        delete_subscription(uid)
+        await query.edit_message_text("✅ Unsubscribed from daily updates.")
+    elif ':' in d:
+        await _detail_button(query, uid, d)
 
-async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the inline query for current weather."""
-    query = update.inline_query.query
-    if not query or query == 'weather_query':
-        results = [
-            InlineQueryResultArticle(
-                id=str(time.time()),
-                title="Type a City Name",
-                input_message_content=InputTextMessageContent(
-                    "Please type a city name to get the current weather."
-                )
-            )
-        ]
-        await update.inline_query.answer(results)
-        return
 
-    city = normalize_city_name(query)
-    units = context.user_data.get('units', DEFAULT_UNITS)
-    data = await get_weather_data(city, units)
-    
-    results = []
-    if data:
-        message_text = await format_weather_message(data, units)
-        
-        input_content = InputTextMessageContent(
-            message_text,
-            parse_mode='Markdown'
-        )
-        
-        results.append(
-            InlineQueryResultArticle(
-                id=str(time.time()),
-                title=f"Current Weather in {data['name']}",
-                input_message_content=input_content,
-                description=data.get('weather', [{}])[0].get('description', '').capitalize(),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Get full report in chat", 
-                                          switch_inline_query_current_chat=f"/weather {data['name']}")
-                    ]
-                ])
-            )
-        )
+async def _detail_button(query, uid: int, d: str):
+    kind, lat, lon = d.split(':')
+    lat, lon = float(lat), float(lon)
+    units = get_user_units(uid)
+    if kind == 'map':
+        await send_map(query.message, lat=lat, lon=lon)
+        return
+    if kind == 'now':
+        await reply_weather(query.message, uid, lat=lat, lon=lon, edit_query=query)
+        return
+    back = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data=f'now:{lat:.3f}:{lon:.3f}')]])
+    try:
+        if kind == 'hourly':
+            text = format_hourly(await call(api.hourly, lat=lat, lon=lon, hours=24, units=units))
+        elif kind == 'daily':
+            text = format_daily(await call(api.daily, lat=lat, lon=lon, days=5, units=units))
+        elif kind == 'aqi':
+            text = format_aqi(await call(api.air_quality, lat=lat, lon=lon))
+        elif kind == 'uv':
+            text = format_uv(await call(api.uv, lat=lat, lon=lon))
+        elif kind == 'alerts':
+            text = format_alerts(await call(api.alerts, lat=lat, lon=lon, units=units))
+        else:
+            return
+    except SkyMateError as e:
+        text = error_text(e)
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=back)
+
+
+# ─── Free-text dispatcher ─────────────────────────────────────────────────────
+
+async def text_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    awaiting = context.user_data.pop('awaiting', None)
+    text = update.message.text.strip()
+    uid = update.effective_user.id
+
+    if awaiting == 'subscribe_city':
+        chat_id = context.user_data.pop('sub_chat_id', update.effective_chat.id)
+        units = get_user_units(uid)
+        try:
+            hits = await call(api.geocode, text, 1)
+        except SkyMateError as e:
+            await update.message.reply_text(error_text(e))
+            return
+        if not hits:
+            context.user_data['awaiting'] = 'subscribe_city'
+            await update.message.reply_markdown(f"❌ *{text}* not found. Please send another city name:")
+            return
+        city = f"{hits[0]['name']}, {hits[0]['country']}"
+        schedule_daily(context.job_queue, uid, chat_id, city, units)
+        save_subscription(uid, chat_id, city, units)
+        await update.message.reply_markdown(f"✅ Subscribed! Daily report for *{city}* at 8:00 AM UTC.")
+    elif awaiting == 'add_fav':
+        await _add_favorite(update.message, uid, text)
+    elif awaiting in ('forecast', 'alerts'):
+        context.args = text.split()
+        await (forecast_command if awaiting == 'forecast' else alerts_command)(update, context)
     else:
-        results.append(
-            InlineQueryResultArticle(
-                id=str(time.time()),
-                title=f"City '{query}' not found",
-                input_message_content=InputTextMessageContent(
-                    f"Weather for '{query}' could not be retrieved. Try a different city name."
-                )
-            )
-        )
-        
-    await update.inline_query.answer(results, cache_time=300)
+        await weather_command(update, context)
 
-async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Command not recognized. Use /help for available commands.")
+
+# ─── Inline mode ──────────────────────────────────────────────────────────────
+
+async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.inline_query.query.strip()
+    if len(q) < 2:
+        await update.inline_query.answer([InlineQueryResultArticle(
+            id='0', title="Type a city name…",
+            input_message_content=InputTextMessageContent("Type a city name to get the weather."))])
+        return
+    units = get_user_units(update.inline_query.from_user.id)
+    try:
+        d = await call(api.current, q=q, units=units)
+        c = d["current"]
+        results = [InlineQueryResultArticle(
+            id='1', title=f"{_place(d['location'])}: {_num(c['temperature'])}{d['units']['temperature']}",
+            description=c['description'].capitalize(),
+            input_message_content=InputTextMessageContent(format_current(d), parse_mode='Markdown'))]
+    except SkyMateError:
+        results = [InlineQueryResultArticle(
+            id='0', title=f"'{q}' not found",
+            input_message_content=InputTextMessageContent(f"No weather found for '{q}'."))]
+    await update.inline_query.answer(results, cache_time=60)
+
+
+async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error("Error: %s", context.error, exc_info=context.error)
+
+
+async def restore_subscriptions(app):
+    subs = get_all_subscriptions()
+    for uid, chat_id, city, units in subs:
+        schedule_daily(app.job_queue, uid, chat_id, city, units)
+    if subs:
+        logger.info("Restored %d subscription(s).", len(subs))
+
 
 def main():
-    application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    if not TELEGRAM_BOT_TOKEN:
+        raise SystemExit("TELEGRAM_BOT_TOKEN is not set in .env")
+    init_db()
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(restore_subscriptions).build()
 
-    # --- Conversation Handlers ---
-    conv_fav = ConversationHandler(
+    app.add_handler(ConversationHandler(
         entry_points=[CommandHandler('addfavorite', add_favorite_start)],
-        states={
-            STATE_ADD_FAVORITE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_favorite_end)]
-        },
-        fallbacks=[]
-    )
-
-    conv_remove = ConversationHandler(
+        states={STATE_ADD_FAVORITE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_favorite_end)]},
+        fallbacks=[CommandHandler('cancel', cancel)]))
+    app.add_handler(ConversationHandler(
         entry_points=[CommandHandler('removefavorite', remove_favorite_start)],
-        states={
-            STATE_REMOVE_FAVORITE: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_favorite_end)]
-        },
-        fallbacks=[MessageHandler(filters.COMMAND, remove_favorite_start)]
-    )
+        states={STATE_REMOVE_FAVORITE: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_favorite_end)]},
+        fallbacks=[CommandHandler('cancel', cancel)]))
 
-    application.add_handler(conv_fav)
-    application.add_handler(conv_remove)
-    
-    # --- Command Handlers ---
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("units", units_command))
-    application.add_handler(CommandHandler("weather", weather_command))
-    application.add_handler(CommandHandler("forecast", forecast_command))
-    application.add_handler(CommandHandler("hourly", hourly_command))
-    application.add_handler(CommandHandler("aqi", aqi_command))
-    application.add_handler(CommandHandler("uv", uv_command))
-    application.add_handler(CommandHandler("alerts", alerts_command))
-    application.add_handler(CommandHandler("radar", radar_command))
-    application.add_handler(CommandHandler("history", history_command))
-    application.add_handler(CommandHandler("favorites", favorites_command))
-    application.add_handler(CommandHandler("subscribe", subscribe_command))
-    
-    # --- Message Handlers ---
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(InlineQueryHandler(inline_query))
-    application.add_handler(MessageHandler(filters.LOCATION, location_handler))
-    
-    # This handler catches plain text messages and treats them as a city search
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, weather_command))
-    
-    # Handle unknown commands
-    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+    for name, fn in [("start", start), ("help", help_command), ("location", location_command),
+                     ("units", units_command), ("settings", settings_command), ("weather", weather_command),
+                     ("forecast", forecast_command), ("week", week_command), ("hourly", hourly_command),
+                     ("aqi", aqi_command), ("uv", uv_command), ("alerts", alerts_command),
+                     ("radar", radar_command), ("history", history_command), ("favorites", favorites_command),
+                     ("subscribe", subscribe_command), ("cancel", cancel)]:
+        app.add_handler(CommandHandler(name, fn))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(InlineQueryHandler(inline_query_handler))
+    app.add_handler(MessageHandler(filters.LOCATION, location_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_dispatcher))
+    app.add_error_handler(error_handler)
+    app.run_polling()
 
-    application.run_polling()
 
 if __name__ == '__main__':
     main()
