@@ -9,7 +9,6 @@ import { BlurFade } from "@/components/ui/blur-fade"
 import { BorderBeam } from "@/components/ui/border-beam"
 import { Button } from "@/components/ui/button"
 import { MagicCard } from "@/components/ui/magic-card"
-import { NumberTicker } from "@/components/ui/number-ticker"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { fmt } from "@/lib/weather"
 import { cn } from "@/lib/utils"
@@ -54,7 +53,7 @@ export function Stats() {
       {items.map((it) => (
         <div key={it.label} className="px-6 py-5">
           <p className="text-3xl font-semibold tabular-nums text-white">
-            {it.value ? <NumberTicker value={it.value} className="text-white" /> : "—"}
+            {it.value ? fmt.number(it.value) : "—"}
           </p>
           <p className="text-sm text-white/60">{it.label}</p>
         </div>

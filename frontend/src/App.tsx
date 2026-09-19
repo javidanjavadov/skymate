@@ -117,7 +117,15 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
       <h1 className="sr-only">SkyMate live weather{data ? ` for ${data.location.name}` : ""}</h1>
       <div ref={topRef} className="space-y-6">
         {data ? <WeatherDashboard data={data} units={units} search={search} /> : (
-          error ? <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-4 backdrop-blur-xl">{search}</div> : <DashboardSkeleton />
+          error ? (
+            <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-4 backdrop-blur-xl">
+              {search}
+              <button type="button" onClick={() => setQuery({ ...query })}
+                className="mt-3 rounded-full bg-white px-5 py-2 text-sm font-medium text-slate-900 outline-none hover:bg-sky-100 focus-visible:ring-2 focus-visible:ring-sky-300">
+                Try Again
+              </button>
+            </div>
+          ) : <DashboardSkeleton />
         )}
         <Stats />
       </div>

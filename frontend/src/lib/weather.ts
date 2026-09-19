@@ -39,13 +39,21 @@ export async function fetchDashboard(query: { q?: string; lat?: number; lon?: nu
     params.set("lat", query.lat.toFixed(4))
     params.set("lon", query.lon.toFixed(4))
   }
-  let res: Response
-  try {
-    res = await fetch(`/site/api/weather?${params}`, { signal })
-  } catch (e) {
-    if ((e as Error).name === "AbortError") throw e
-    throw new WeatherError("Can’t reach SkyMate. Check your connection and try again.")
+  let res: Response | undefined
+  for (let attempt = 0; attempt < 2 && !res; attempt++) {
+    const timeout = AbortSignal.timeout(20_000)
+    try {
+      res = await fetch(`/site/api/weather?${params}`, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
+    } catch (e) {
+      if (signal?.aborted) throw e
+      if (attempt === 1) {
+        throw new WeatherError((e as Error).name === "TimeoutError"
+          ? "SkyMate is taking too long to respond. It may be starting up; try again in a minute."
+          : "Can’t reach SkyMate. Check your connection and try again.")
+      }
+    }
   }
+  if (!res) throw new WeatherError("Can’t reach SkyMate. Check your connection and try again.")
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new WeatherError(body.error ?? "Something went wrong. Try again in a moment.")
   return body as Dashboard
