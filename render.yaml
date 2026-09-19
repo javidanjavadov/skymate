@@ -30,6 +30,8 @@ services:
         value: webhook
       - key: BOT_ADMIN_ID
         value: "1173970613"
+      - key: APP_DOWNLOAD_URL
+        value: https://github.com/javidanjavadov/skymate/releases/latest/download/SkyMate.exe
       - key: SKYMATE_MODELS
         value: gfs
       - key: SKYMATE_DOWNLOAD_WORKERS

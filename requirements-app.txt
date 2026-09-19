@@ -1,0 +1,8 @@
+# Desktop app build (Windows). Pinned; used by scripts/build_windows.ps1 in a clean virtual environment.
+customtkinter==6.0.0
+Pillow==11.2.1
+requests==2.32.3
+matplotlib==3.10.7
+numpy==2.2.6
+pytz==2025.2
+pyinstaller==6.22.3

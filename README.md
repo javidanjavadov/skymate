@@ -73,6 +73,18 @@ On Postgres, the service runs `scripts/db_smoke_test.py` at startup and logs `AL
 
 Report security issues privately to the owner rather than in public issues.
 
+## Releasing the desktop app
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 1.0.1
+gh release create v1.0.1 dist\SkyMate.exe dist\SkyMate.exe.sha256 --title "SkyMate 1.0.1" --notes-file notes.md
+```
+
+The build runs in a fresh virtual environment from `requirements-app.txt`, with UPX packing disabled and no
+obfuscation, and writes `SkyMate.exe.sha256`. If a legitimate code-signing certificate is available, sign the
+executable with `signtool` before publishing. If Microsoft Defender or SmartScreen wrongly flags a release, report
+it at https://www.microsoft.com/wdsi/filesubmission as a software developer false positive.
+
 ## Tests
 
 ```bash

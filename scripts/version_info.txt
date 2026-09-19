@@ -1,0 +1,27 @@
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=({V1}, {V2}, {V3}, 0),
+    prodvers=({V1}, {V2}, {V3}, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable('040904B0', [
+        StringStruct('CompanyName', 'SkyMate'),
+        StringStruct('FileDescription', 'SkyMate Weather'),
+        StringStruct('FileVersion', '{VERSION}'),
+        StringStruct('InternalName', 'SkyMate'),
+        StringStruct('LegalCopyright', 'Copyright (c) 2026 SkyMate'),
+        StringStruct('OriginalFilename', 'SkyMate.exe'),
+        StringStruct('ProductName', 'SkyMate'),
+        StringStruct('ProductVersion', '{VERSION}')
+      ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)

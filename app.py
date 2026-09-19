@@ -15,6 +15,11 @@ import pytz
 
 from skymate_client import SkyMate, SkyMateError
 
+try:
+    from app_version import APP_VERSION
+except ImportError:
+    APP_VERSION = "dev"
+
 DEFAULT_API_URL = "https://skymate-thfc.onrender.com"
 BOT_USERNAME = "@skymatee_bot"
 
@@ -38,6 +43,7 @@ def save_settings(data: dict):
 
 _settings = load_settings()
 api = SkyMate(_settings.get("api_url") or DEFAULT_API_URL, _settings.get("api_key", ""))
+api.s.headers["User-Agent"] = f"SkyMate-Desktop/{APP_VERSION}"
 
 WEATHER_EMOJIS = {
     'Clear': '☀️', 'Clouds': '☁️', 'Rain': '🌧️', 'Drizzle': '🌦️', 'Thunderstorm': '⛈️',
@@ -60,7 +66,7 @@ TEXT_DIM = "#9999aa"
 class SkyMateApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("SkyMate")
+        self.title(f"SkyMate {APP_VERSION}")
         self.geometry("960x660")
         self.minsize(720, 520)
         self.configure(fg_color=BG_DARK)
