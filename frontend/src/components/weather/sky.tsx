@@ -187,9 +187,12 @@ type CloudLayerSpec = { count: number; size: [number, number]; y: [number, numbe
 function makeCloud(w: number, style: CloudStyle): HTMLCanvasElement {
   const h = Math.round(w * 0.55)
   const c = document.createElement("canvas")
-  c.width = w
-  c.height = h
+  // Render at screen resolution so clouds stay crisp on high-DPI displays
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  c.width = Math.round(w * dpr)
+  c.height = Math.round(h * dpr)
   const g = c.getContext("2d")!
+  g.scale(dpr, dpr)
   const puffs = 22 + Math.floor(Math.random() * 14)
   for (let i = 0; i < puffs; i++) {
     const x = rand(0.14, 0.86) * w
@@ -198,7 +201,7 @@ function makeCloud(w: number, style: CloudStyle): HTMLCanvasElement {
     const y = h * 0.78 - r * rand(0.25, 0.95)
     const grad = g.createRadialGradient(x, y, 0, x, y, r)
     grad.addColorStop(0, `rgba(${style.light},1)`)
-    grad.addColorStop(0.9, `rgba(${style.light},1)`)
+    grad.addColorStop(0.96, `rgba(${style.light},1)`)
     grad.addColorStop(1, `rgba(${style.light},0)`)
     g.fillStyle = grad
     g.beginPath()
@@ -223,7 +226,7 @@ function makeCloud(w: number, style: CloudStyle): HTMLCanvasElement {
 }
 
 function cloudPainter(style: CloudStyle, layers: CloudLayerSpec[]): Painter {
-  type Cloud = { img: HTMLCanvasElement; x: number; y: number; speed: number; alpha: number }
+  type Cloud = { img: HTMLCanvasElement; w: number; h: number; x: number; y: number; speed: number; alpha: number }
   let clouds: Cloud[] = []
   return {
     resize(w, h) {
@@ -231,6 +234,8 @@ function cloudPainter(style: CloudStyle, layers: CloudLayerSpec[]): Painter {
         const cw = Math.round(Math.min(900, w * rand(l.size[0], l.size[1])) + 120)
         return {
           img: makeCloud(cw, style),
+          w: cw,
+          h: Math.round(cw * 0.55),
           x: ((i + rand(0, 0.8)) / l.count) * (w + cw) - cw,
           y: h * rand(l.y[0], l.y[1]) - cw * 0.3,
           speed: l.speed * rand(0.8, 1.2),
@@ -241,9 +246,9 @@ function cloudPainter(style: CloudStyle, layers: CloudLayerSpec[]): Painter {
     frame(ctx, w, _h, _t, dt) {
       for (const c of clouds) {
         ctx.globalAlpha = c.alpha
-        ctx.drawImage(c.img, c.x, c.y)
+        ctx.drawImage(c.img, c.x, c.y, c.w, c.h)
         c.x += c.speed * dt
-        if (c.x > w + 20) c.x = -c.img.width - rand(0, 200)
+        if (c.x > w + 20) c.x = -c.w - rand(0, 200)
       }
       ctx.globalAlpha = 1
     },
@@ -282,7 +287,7 @@ function FogBands() {
   return (
     <>
       {["top-[18%]", "top-[42%]", "top-[64%]"].map((pos, i) => (
-        <div key={pos} className={cn("sky-drift absolute -inset-x-1/4 h-[28%] bg-gradient-to-r from-transparent via-white/45 to-transparent blur-lg", pos)}
+        <div key={pos} className={cn("sky-drift absolute -inset-x-1/4 h-[28%] bg-gradient-to-r from-transparent via-white/45 to-transparent blur-md", pos)}
           style={{ animationDelay: `${-i * 5}s`, animationDuration: `${16 + i * 6}s` }} />
       ))}
     </>

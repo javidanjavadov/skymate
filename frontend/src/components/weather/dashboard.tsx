@@ -6,6 +6,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import type { SkyScene } from "@/components/weather/sky"
 import { WeatherIcon } from "@/components/weather/weather-icon"
 import { cn } from "@/lib/utils"
 import {
@@ -330,7 +331,27 @@ function buildView(data: Data, sel: Selection, units: Units): View {
 const card = "rounded-3xl border border-white/15 bg-slate-950/30 [text-shadow:0_1px_2px_rgb(0_0_0/0.35)] shadow-[0_12px_40px_-18px_rgba(0,0,0,0.7)]"
 const choice = "flex w-[4.75rem] flex-col items-center rounded-2xl px-2 py-3 outline-none transition-colors sm:w-[5.25rem] focus-visible:ring-2 focus-visible:ring-sky-300"
 
-export function WeatherDashboard({ data, units, search }: { data: Data; units: Units; search: ReactNode }) {
+/** Cloud cover for the background scene; daily summaries only carry a description. */
+function sceneFor(data: Data, sel: Selection): SkyScene {
+  if (sel.kind === "hour") {
+    const h = data.hourly[sel.index]
+    return { condition: h.condition, isDay: h.is_day, cloudCover: h.cloud_cover }
+  }
+  if (sel.kind === "day") {
+    const d = data.daily[sel.index]
+    const desc = d.description.toLowerCase()
+    return { condition: d.condition, isDay: true, cloudCover: desc.includes("few") || desc.includes("scattered") ? 40 : desc.includes("broken") ? 65 : 90 }
+  }
+  return { condition: data.now.condition, isDay: data.now.is_day, cloudCover: data.now.cloud_cover }
+}
+
+export function WeatherDashboard({ data, units, search, onScene }: {
+  data: Data
+  units: Units
+  search: ReactNode
+  /** Called with the weather to show in the background: now, or the selected hour/day. */
+  onScene?: (scene: SkyScene) => void
+}) {
   const tz = data.location.timezone
   const [sel, setSel] = useState<Selection>({ kind: "now" })
   const [tab, setTab] = useState<"hourly" | "daily">("hourly")
@@ -341,6 +362,12 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
   const wind = fmt.speed(view.wind.speed, units)
   const gust = fmt.speed(view.wind.gust, units)
   const viewKey = sel.kind === "now" ? "now" : `${sel.kind}-${sel.index}`
+
+  useEffect(() => {
+    onScene?.(sceneFor(data, sel))
+    // viewKey captures the selection; data changes only with a new place
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewKey, data, onScene])
 
   const select = (next: Selection) => {
     setSel(next)

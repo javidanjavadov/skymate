@@ -145,7 +145,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
     <>
       <h1 className="sr-only">SkyMate live weather{data ? ` for ${data.location.name}` : ""}</h1>
       <div ref={topRef} className="space-y-6">
-        {data ? <div key={data.location.name} className="sky-fade-in"><WeatherDashboard data={data} units={units} search={search} /></div> : (
+        {data ? <div key={data.location.name} className="sky-fade-in"><WeatherDashboard data={data} units={units} search={search} onScene={setCondition} /></div> : (
           error ? (
             <div className="rounded-3xl border border-white/10 bg-slate-950/75 p-4">
               {search}
