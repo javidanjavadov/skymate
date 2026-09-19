@@ -6,14 +6,14 @@ import { Footer } from "@/components/site/footer"
 import { Header } from "@/components/site/header"
 import { Privacy, Terms } from "@/components/site/legal"
 import { DashboardSkeleton, SearchBar, WeatherDashboard } from "@/components/weather/dashboard"
-import { ForegroundRain, Sky } from "@/components/weather/sky"
+import { ForegroundRain, Sky, type SkyScene } from "@/components/weather/sky"
 import { fetchDashboard, WeatherError, type Dashboard, type Units } from "@/lib/weather"
 
 const DEFAULT_CITY = "Baku"
 const CONDITIONS = ["Clear", "Clouds", "Rain", "Drizzle", "Thunderstorm", "Snow", "Mist", "Fog"] as const
 
 /** ?sky=rain or ?sky=clear-night previews a background scene regardless of the real weather. */
-function previewSky(): { condition: Dashboard["now"]["condition"]; isDay: boolean } | null {
+function previewSky(): SkyScene | null {
   const raw = new URLSearchParams(location.search).get("sky")?.toLowerCase()
   if (!raw) return null
   const [name, time] = raw.split("-")
@@ -60,7 +60,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
   units: Units
   paused: boolean
   setSkyActive: (active: boolean) => void
-  setCondition: (c: { condition: Dashboard["now"]["condition"]; isDay: boolean; cloudCover?: number | null }) => void
+  setCondition: (c: SkyScene) => void
   bot: string
   stars: number
 }) {
@@ -126,9 +126,9 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
     <>
       <h1 className="sr-only">SkyMate live weather{data ? ` for ${data.location.name}` : ""}</h1>
       <div ref={topRef} className="space-y-6">
-        {data ? <WeatherDashboard data={data} units={units} search={search} /> : (
+        {data ? <div key={data.location.name} className="sky-fade-in"><WeatherDashboard data={data} units={units} search={search} /></div> : (
           error ? (
-            <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-4 backdrop-blur-xl">
+            <div className="rounded-3xl border border-white/10 bg-slate-950/75 p-4">
               {search}
               <button type="button" onClick={() => setQuery({ ...query })}
                 className="mt-3 rounded-full bg-white px-5 py-2 text-sm font-medium text-slate-900 outline-none hover:bg-sky-100 focus-visible:ring-2 focus-visible:ring-sky-300">
@@ -156,7 +156,8 @@ export default function App() {
   const reduceMotion = useReducedMotion()
   const [units, setUnitsState] = useState<Units>(() => readStored("skymate-units", ["metric", "imperial"] as const, "metric"))
   const [pausedPref, setPausedPref] = useState(() => readStored("skymate-paused", ["1", "0"] as const, "0") === "1")
-  const [sky, setSky] = useState<{ condition: Dashboard["now"]["condition"]; isDay: boolean; cloudCover?: number | null }>({ condition: "Clouds", isDay: true })
+  // No scene until real data arrives: a neutral sky, then a cross-fade into the actual weather.
+  const [sky, setSky] = useState<SkyScene | null>(null)
   const [info, setInfo] = useState({ bot: "skymatee_bot", stars: 150 })
   const [skyActive, setSkyActive] = useState(true)
   const paused = pausedPref || !!reduceMotion
@@ -180,8 +181,8 @@ export default function App() {
       <a href="#main" className="sr-only z-50 rounded-lg bg-white px-4 py-2 text-slate-900 focus:not-sr-only focus:fixed focus:left-4 focus:top-4">
         Skip to Content
       </a>
-      <Sky condition={skyPreview?.condition ?? sky.condition} isDay={skyPreview?.isDay ?? sky.isDay} cloudCover={sky.cloudCover} paused={paused} active={skyActive} />
-      <ForegroundRain condition={skyPreview?.condition ?? sky.condition} paused={paused} active={skyActive} />
+      <Sky scene={skyPreview ?? sky} paused={paused} active={skyActive} />
+      <ForegroundRain scene={skyPreview ?? sky} paused={paused} active={skyActive} />
       <Header units={units} setUnits={setUnits} paused={pausedPref} setPaused={setPaused} bot={info.bot} />
       <main id="main" tabIndex={-1} className="mx-auto max-w-7xl px-3 pt-4 pb-24 outline-none sm:px-6 sm:pt-8
         pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]">

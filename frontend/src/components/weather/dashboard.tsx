@@ -13,7 +13,8 @@ import {
   compass, feelsNote, fmt, summary, title, uvCategory, type Dashboard as Data, type Units,
 } from "@/lib/weather"
 
-const panel = "rounded-[2rem] border border-white/15 bg-slate-950/25 backdrop-blur-md shadow-[0_20px_60px_-20px_rgba(0,0,0,0.6)]"
+// No frosted frame around the dashboard: the sky shows between solid cards.
+const panel = "grid gap-4 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]"
 
 function CardTitle({ icon, children, id }: { icon: ReactNode; children: ReactNode; id?: string }) {
   return (
@@ -33,7 +34,7 @@ function Tile({ icon, label, value, note }: { icon: ReactNode; label: string; va
       gradientTo="#a78bfa"
       gradientSize={180}
     >
-      <div className="flex h-full min-h-32 flex-col gap-1 rounded-2xl bg-slate-950/50 p-4 sm:min-h-36">
+      <div className="flex h-full min-h-32 flex-col gap-1 rounded-2xl bg-slate-950/70 p-4 sm:min-h-36">
         <CardTitle icon={icon}>{label}</CardTitle>
         <div className="mt-1 text-3xl font-medium tabular-nums text-white sm:text-4xl">{value}</div>
         {note && <p className="mt-auto text-pretty text-[13px] leading-snug text-white/65">{note}</p>}
@@ -52,7 +53,7 @@ export function SearchBar({ onSearch, onLocate, busy, defaultValue }: {
   return (
     <form
       role="search"
-      className="flex items-center gap-2 rounded-full border border-white/10 bg-white/10 p-1.5 pl-4 backdrop-blur-md focus-within:ring-2 focus-within:ring-sky-300/60"
+      className="flex items-center gap-2 rounded-full border border-white/10 bg-slate-950/70 p-1.5 pl-4 focus-within:ring-2 focus-within:ring-sky-300/60"
       onSubmit={(e) => {
         e.preventDefault()
         const q = String(new FormData(e.currentTarget).get("q") ?? "").trim()
@@ -130,15 +131,15 @@ function Compass({ deg }: { deg: number | null }) {
 
 export function DashboardSkeleton() {
   return (
-    <div className={cn(panel, "grid gap-4 p-3 sm:p-4 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:p-5")} aria-busy="true" aria-live="polite">
+    <div className={panel} aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading weather…</span>
       <div className="space-y-4">
-        <Skeleton className="h-[26rem] rounded-3xl bg-white/10" />
-        <div className="grid grid-cols-2 gap-3"><Skeleton className="h-32 rounded-2xl bg-white/10" /><Skeleton className="h-32 rounded-2xl bg-white/10" /></div>
+        <Skeleton className="h-[26rem] rounded-3xl bg-slate-900/70" />
+        <div className="grid grid-cols-2 gap-3"><Skeleton className="h-32 rounded-2xl bg-slate-900/70" /><Skeleton className="h-32 rounded-2xl bg-slate-900/70" /></div>
       </div>
       <div className="space-y-4">
-        <Skeleton className="h-44 rounded-3xl bg-white/10" /><Skeleton className="h-44 rounded-3xl bg-white/10" />
-        <div className="grid gap-4 sm:grid-cols-2"><Skeleton className="h-40 rounded-3xl bg-white/10" /><Skeleton className="h-40 rounded-3xl bg-white/10" /></div>
+        <Skeleton className="h-44 rounded-3xl bg-slate-900/70" /><Skeleton className="h-44 rounded-3xl bg-slate-900/70" />
+        <div className="grid gap-4 sm:grid-cols-2"><Skeleton className="h-40 rounded-3xl bg-slate-900/70" /><Skeleton className="h-40 rounded-3xl bg-slate-900/70" /></div>
       </div>
     </div>
   )
@@ -153,11 +154,11 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
   const hourly = data.hourly.filter((h) => new Date(h.time).getTime() >= Date.now() - 90 * 60 * 1000)
 
   return (
-    <div className={cn(panel, "grid gap-4 p-3 sm:p-4 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:p-5")}>
+    <div className={panel}>
       {/* Left column: search, now, detail tiles */}
       <div className="flex min-w-0 flex-col gap-4">
         {search}
-        <section aria-labelledby="now-title" className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b from-white/[0.08] to-white/[0.02] p-5 sm:p-7">
+        <section aria-labelledby="now-title" className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b from-slate-900/75 to-slate-950/80 shadow-[0_12px_40px_-18px_rgba(0,0,0,0.7)] p-5 sm:p-7">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="flex min-w-0 items-center gap-1.5 text-sm text-white/80">
                 <MapPin aria-hidden="true" className="size-4 shrink-0" />
@@ -216,7 +217,7 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
 
       {/* Right column: hourly, 10-day, UV, wind */}
       <div className="flex min-w-0 flex-col gap-4">
-        <section aria-labelledby="hourly-title" className="rounded-3xl border border-white/10 bg-slate-950/40 p-4 sm:p-5">
+        <section aria-labelledby="hourly-title" className="rounded-3xl border border-white/10 bg-slate-950/70 shadow-[0_12px_40px_-18px_rgba(0,0,0,0.7)] p-4 sm:p-5">
           <CardTitle id="hourly-title" icon={<Clock />}>Hourly Forecast</CardTitle>
           <div className="mt-3 border-t border-white/10" />
           <ol role="list" tabIndex={0} aria-label="Hourly forecast, scroll horizontally"
@@ -233,7 +234,7 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
           </ol>
         </section>
 
-        <section aria-labelledby="daily-title" className="rounded-3xl border border-white/10 bg-slate-950/40 p-4 sm:p-5">
+        <section aria-labelledby="daily-title" className="rounded-3xl border border-white/10 bg-slate-950/70 shadow-[0_12px_40px_-18px_rgba(0,0,0,0.7)] p-4 sm:p-5">
           <CardTitle id="daily-title" icon={<CalendarDays />}>{data.daily.length}-Day Forecast</CardTitle>
           <div className="mt-3 border-t border-white/10" />
           <ol role="list" tabIndex={0} aria-label="Daily forecast, scroll horizontally"
@@ -253,7 +254,7 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
         </section>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <section aria-labelledby="uv-title" className="flex min-w-0 flex-col rounded-3xl border border-white/10 bg-slate-950/40 p-4 sm:p-5">
+          <section aria-labelledby="uv-title" className="flex min-w-0 flex-col rounded-3xl border border-white/10 bg-slate-950/70 shadow-[0_12px_40px_-18px_rgba(0,0,0,0.7)] p-4 sm:p-5">
             <CardTitle id="uv-title" icon={<Sun />}>UV Index</CardTitle>
             <p className="mt-4 text-4xl font-medium tabular-nums text-white">{now.uv_index == null ? "–" : fmt.number(now.uv_index, 0)}</p>
             <p className="text-lg text-white/90">{uvCategory(now.uv_index)}</p>
@@ -267,7 +268,7 @@ export function WeatherDashboard({ data, units, search }: { data: Data; units: U
             </p>
           </section>
 
-          <section aria-labelledby="wind-title" className="min-w-0 rounded-3xl border border-white/10 bg-slate-950/40 p-4 sm:p-5">
+          <section aria-labelledby="wind-title" className="min-w-0 rounded-3xl border border-white/10 bg-slate-950/70 shadow-[0_12px_40px_-18px_rgba(0,0,0,0.7)] p-4 sm:p-5">
             <CardTitle id="wind-title" icon={<Wind />}>Wind</CardTitle>
             <div className="mt-3 flex items-center justify-between gap-3">
               <dl className="min-w-0 flex-1 divide-y divide-white/10">

@@ -31,7 +31,7 @@ export function Header({ units, setUnits, paused, setPaused, bot }: {
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <header className="sticky top-0 z-40 border-b border-white/10 bg-slate-950/55 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
+    <header className="sticky top-0 z-40 border-b border-white/10 bg-slate-950/85 pt-[env(safe-area-inset-top)] backdrop-blur-sm">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
         <Logo />
         <nav aria-label="Main" className="ml-4 hidden items-center gap-1 lg:flex">

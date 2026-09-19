@@ -1,265 +1,433 @@
-import { useEffect, useRef, type CSSProperties } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
-import { Particles } from "@/components/ui/particles"
 import type { Condition } from "@/lib/weather"
 import { cn } from "@/lib/utils"
 
-const GRADIENTS: Record<string, string> = {
-  "Clear-day": "from-sky-400 via-sky-500 to-blue-800",
-  "Clear-night": "from-indigo-950 via-slate-950 to-black",
-  "Clouds-day": "from-sky-500 via-slate-500 to-slate-800",
-  "Clouds-night": "from-slate-800 via-slate-900 to-black",
-  "Rain-day": "from-slate-600 via-slate-700 to-slate-900",
-  "Rain-night": "from-slate-800 via-slate-900 to-black",
-  "Drizzle-day": "from-slate-500 via-slate-600 to-slate-900",
-  "Drizzle-night": "from-slate-800 via-slate-900 to-black",
-  "Thunderstorm-day": "from-slate-700 via-indigo-950 to-black",
-  "Thunderstorm-night": "from-slate-900 via-indigo-950 to-black",
-  "Snow-day": "from-slate-300 via-slate-400 to-slate-700",
-  "Snow-night": "from-slate-700 via-slate-900 to-black",
-  "Mist-day": "from-slate-400 via-slate-500 to-slate-800",
-  "Mist-night": "from-slate-700 via-slate-900 to-black",
-  "Fog-day": "from-slate-400 via-slate-500 to-slate-800",
-  "Fog-night": "from-slate-700 via-slate-900 to-black",
-}
+export type SkyScene = { condition: Condition; isDay: boolean; cloudCover?: number | null }
 
-/* ─── Rain (canvas) ────────────────────────────────────────────────────────── */
+/* ─── Canvas engine ────────────────────────────────────────────────────────── */
 
-export function RainCanvas({ intensity, lightning, running }: { intensity: number; lightning: boolean; running: boolean }) {
+type Painter = { resize: (w: number, h: number) => void; frame: (ctx: CanvasRenderingContext2D, w: number, h: number, t: number, dt: number) => void }
+
+function SceneCanvas({ create, running, className }: { create: () => Painter; running: boolean; className?: string }) {
   const ref = useRef<HTMLCanvasElement>(null)
-
   useEffect(() => {
     const canvas = ref.current
-    if (!canvas) return
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-    let width = 0, height = 0, frame = 0, flash = 0
-    type Drop = { x: number; y: number; len: number; speed: number; alpha: number; w: number }
-    let drops: Drop[] = []
-    const spawn = (anywhere: boolean): Drop => {
-      const near = Math.random() < 0.18
-      return {
-        x: Math.random() * (width + 300) - 150,
-        y: anywhere ? Math.random() * height : -60,
-        len: near ? 38 + Math.random() * 30 : 16 + Math.random() * 22,
-        speed: near ? 20 + Math.random() * 8 : 11 + Math.random() * 8,
-        alpha: near ? 0.35 + Math.random() * 0.25 : 0.2 + Math.random() * 0.3,
-        w: near ? 1.6 : 1,
-      }
-    }
+    const ctx = canvas?.getContext("2d")
+    if (!canvas || !ctx) return
+    const painter = create()
+    let w = 0, h = 0, raf = 0, last = performance.now()
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
-      width = canvas.clientWidth
-      height = canvas.clientHeight
-      canvas.width = width * dpr
-      canvas.height = height * dpr
+      w = canvas.clientWidth
+      h = canvas.clientHeight
+      canvas.width = Math.round(w * dpr)
+      canvas.height = Math.round(h * dpr)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      const count = Math.round((width * height) / 5000 * intensity)
-      drops = Array.from({ length: Math.min(count, 700) }, () => spawn(true))
+      painter.resize(w, h)
+      if (!running) { ctx.clearRect(0, 0, w, h); painter.frame(ctx, w, h, performance.now(), 0) }
     }
-    const observer = new ResizeObserver(resize)
-    observer.observe(canvas)
+    const ro = new ResizeObserver(resize)
+    ro.observe(canvas)
     resize()
-    const slant = 0.2
-    const tick = () => {
-      ctx.clearRect(0, 0, width, height)
-      if (lightning) {
-        if (flash <= 0 && Math.random() < 0.004) flash = 1
+    const loop = (now: number) => {
+      const dt = Math.min(50, now - last)
+      last = now
+      ctx.clearRect(0, 0, w, h)
+      painter.frame(ctx, w, h, now, dt)
+      raf = requestAnimationFrame(loop)
+    }
+    if (running) raf = requestAnimationFrame(loop)
+    return () => { cancelAnimationFrame(raf); ro.disconnect() }
+  }, [create, running])
+  return <canvas ref={ref} aria-hidden="true" className={cn("absolute inset-0 h-full w-full", className)} />
+}
+
+const rand = (a: number, b: number) => a + Math.random() * (b - a)
+
+function rainPainter(intensity: number, lightning: boolean): Painter {
+  const layers = [
+    { share: 0.5, len: [10, 18], speed: [9, 12], alpha: [0.12, 0.22], width: 0.8 },
+    { share: 0.35, len: [18, 30], speed: [14, 18], alpha: [0.2, 0.34], width: 1.1 },
+    { share: 0.15, len: [32, 52], speed: [22, 28], alpha: [0.3, 0.48], width: 1.6 },
+  ]
+  type Drop = { x: number; y: number; len: number; speed: number; alpha: number; width: number }
+  let drops: Drop[] = []
+  let flash = 0, bolt: { pts: [number, number][]; life: number } | null = null
+  const spawn = (l: typeof layers[number], w: number, h: number, anywhere: boolean): Drop => ({
+    x: rand(-150, w + 150), y: anywhere ? rand(0, h) : rand(-120, -20),
+    len: rand(l.len[0], l.len[1]), speed: rand(l.speed[0], l.speed[1]), alpha: rand(l.alpha[0], l.alpha[1]), width: l.width,
+  })
+  return {
+    resize(w, h) {
+      const total = Math.min(900, Math.round((w * h) / 3800 * intensity))
+      drops = layers.flatMap((l) => Array.from({ length: Math.round(total * l.share) }, () => spawn(l, w, h, true)))
+    },
+    frame(ctx, w, h, t, dt) {
+      const slant = 0.16 + Math.sin(t / 2600) * 0.06
+      if (lightning && dt > 0) {
+        if (flash <= 0 && Math.random() < dt / 7000) {
+          flash = 1
+          let x = rand(w * 0.15, w * 0.85), y = 0
+          const pts: [number, number][] = [[x, y]]
+          while (y < h * rand(0.45, 0.7)) { y += rand(18, 42); x += rand(-26, 26); pts.push([x, y]) }
+          bolt = { pts, life: 1 }
+        }
         if (flash > 0) {
-          ctx.fillStyle = `rgba(215, 228, 255, ${flash * 0.35})`
-          ctx.fillRect(0, 0, width, height)
-          flash -= 0.05
+          ctx.fillStyle = `rgba(200, 215, 255, ${flash * 0.28})`
+          ctx.fillRect(0, 0, w, h)
+          flash -= dt / 380
+        }
+        if (bolt && bolt.life > 0) {
+          ctx.save()
+          ctx.strokeStyle = `rgba(235, 242, 255, ${bolt.life})`
+          ctx.shadowColor = "rgba(170, 195, 255, 0.9)"
+          ctx.shadowBlur = 18
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          bolt.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)))
+          ctx.stroke()
+          ctx.restore()
+          bolt.life -= dt / 260
         }
       }
       ctx.lineCap = "round"
+      const step = dt / 16
       for (const d of drops) {
-        ctx.strokeStyle = `rgba(210, 228, 255, ${d.alpha})`
-        ctx.lineWidth = d.w
+        ctx.strokeStyle = `rgba(214, 228, 245, ${d.alpha})`
+        ctx.lineWidth = d.width
         ctx.beginPath()
         ctx.moveTo(d.x, d.y)
         ctx.lineTo(d.x - d.len * slant, d.y + d.len)
         ctx.stroke()
-        d.y += d.speed
-        d.x -= d.speed * slant
-        if (d.y > height + 60) Object.assign(d, spawn(false))
+        d.y += d.speed * step
+        d.x -= d.speed * slant * step
+        if (d.y > h + 60) { d.y = rand(-120, -20); d.x = rand(-150, w + 250) }
       }
-      frame = requestAnimationFrame(tick)
-    }
-    if (running) {
-      frame = requestAnimationFrame(tick)
-    } else {
-      tick() // draw one still frame, then stop
-      cancelAnimationFrame(frame)
-    }
-    return () => {
-      cancelAnimationFrame(frame)
-      observer.disconnect()
-    }
-  }, [intensity, lightning, running])
-
-  return <canvas ref={ref} aria-hidden="true" className="absolute inset-0 h-full w-full" />
+    },
+  }
 }
 
-/* ─── Sun ──────────────────────────────────────────────────────────────────── */
-
-function Sun({ dim = false }: { dim?: boolean }) {
-  return (
-    <div className={cn("absolute -top-[18vmin] right-[-12vmin] size-[80vmin] sm:right-[2vw]", dim && "opacity-60")}>
-      <div className="sky-spin absolute inset-0 rounded-full opacity-70
-        bg-[repeating-conic-gradient(from_0deg,rgba(255,236,170,0.55)_0deg_4deg,transparent_4deg_18deg)]
-        [mask-image:radial-gradient(circle,black_18%,transparent_68%)]" />
-      <div className="sky-spin-reverse absolute inset-[8%] rounded-full opacity-50
-        bg-[repeating-conic-gradient(from_9deg,rgba(255,220,130,0.5)_0deg_2deg,transparent_2deg_14deg)]
-        [mask-image:radial-gradient(circle,black_20%,transparent_62%)]" />
-      <div className="sky-pulse absolute inset-[18%] rounded-full bg-[radial-gradient(circle,rgba(255,244,200,0.95)_0%,rgba(255,206,84,0.55)_35%,rgba(255,170,40,0)_70%)]" />
-      <div className="absolute inset-[37%] rounded-full bg-[radial-gradient(circle_at_40%_40%,#fffbe8,#ffe07a_55%,#ffc53d)] shadow-[0_0_120px_40px_rgba(255,214,100,0.55)]" />
-    </div>
-  )
+function snowPainter(): Painter {
+  type Flake = { x: number; y: number; r: number; speed: number; sway: number; phase: number; alpha: number }
+  let flakes: Flake[] = []
+  return {
+    resize(w, h) {
+      const n = Math.min(420, Math.round((w * h) / 5200))
+      flakes = Array.from({ length: n }, () => {
+        const r = Math.random() < 0.15 ? rand(2.4, 3.6) : rand(0.8, 2)
+        return { x: rand(0, w), y: rand(0, h), r, speed: r * 0.35, sway: rand(0.3, 1.1), phase: rand(0, Math.PI * 2), alpha: rand(0.55, 0.95) }
+      })
+    },
+    frame(ctx, w, h, t, dt) {
+      const step = dt / 16
+      for (const f of flakes) {
+        const x = f.x + Math.sin(t / 1400 + f.phase) * 12 * f.sway
+        ctx.fillStyle = `rgba(255, 255, 255, ${f.alpha})`
+        ctx.beginPath()
+        ctx.arc(x, f.y, f.r, 0, Math.PI * 2)
+        ctx.fill()
+        f.y += f.speed * step
+        f.x += 0.15 * step
+        if (f.y > h + 8) { f.y = -8; f.x = rand(0, w) }
+        if (f.x > w + 20) f.x = -20
+      }
+    },
+  }
 }
 
-function SunBeams() {
+function starPainter(density = 1): Painter {
+  type Star = { x: number; y: number; r: number; base: number; speed: number; phase: number }
+  let stars: Star[] = []
+  let shooting: { x: number; y: number; vx: number; vy: number; life: number } | null = null
+  return {
+    resize(w, h) {
+      const n = Math.min(650, Math.round((w * h) / 2400 * density))
+      stars = Array.from({ length: n }, () => ({
+        x: rand(0, w), y: rand(0, h * 0.85), r: Math.random() < 0.08 ? rand(1.1, 1.6) : rand(0.3, 0.9),
+        base: rand(0.35, 0.95), speed: rand(0.6, 1.8), phase: rand(0, Math.PI * 2),
+      }))
+    },
+    frame(ctx, w, h, t, dt) {
+      for (const s of stars) {
+        const a = s.base * (0.65 + 0.35 * Math.sin(t / 1000 * s.speed + s.phase))
+        ctx.fillStyle = `rgba(232, 240, 255, ${a})`
+        ctx.beginPath()
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      if (dt > 0 && !shooting && Math.random() < dt / 9000) {
+        shooting = { x: rand(w * 0.2, w), y: rand(0, h * 0.35), vx: -rand(9, 13), vy: rand(3, 5), life: 1 }
+      }
+      if (shooting) {
+        const s = shooting
+        const grad = ctx.createLinearGradient(s.x, s.y, s.x - s.vx * 9, s.y - s.vy * 9)
+        grad.addColorStop(0, `rgba(255, 255, 255, ${s.life})`)
+        grad.addColorStop(1, "rgba(255, 255, 255, 0)")
+        ctx.strokeStyle = grad
+        ctx.lineWidth = 1.6
+        ctx.beginPath()
+        ctx.moveTo(s.x, s.y)
+        ctx.lineTo(s.x - s.vx * 9, s.y - s.vy * 9)
+        ctx.stroke()
+        s.x += s.vx * (dt / 16)
+        s.y += s.vy * (dt / 16)
+        s.life -= dt / 900
+        if (s.life <= 0) shooting = null
+      }
+    },
+  }
+}
+
+/* ─── Clouds: pre-rendered cumulus sprites drifting at three depths ───────── */
+
+type CloudStyle = { light: string; shadow: string } // light is an "r,g,b" triplet
+type CloudLayerSpec = { count: number; size: [number, number]; y: [number, number]; speed: number; alpha: number }
+
+function makeCloud(w: number, style: CloudStyle): HTMLCanvasElement {
+  const h = Math.round(w * 0.55)
+  const c = document.createElement("canvas")
+  c.width = w
+  c.height = h
+  const g = c.getContext("2d")!
+  const puffs = 22 + Math.floor(Math.random() * 14)
+  for (let i = 0; i < puffs; i++) {
+    const x = rand(0.14, 0.86) * w
+    const d = Math.abs(x - w / 2) / (w / 2)
+    const r = w * (0.07 + 0.13 * (1 - d * d)) * rand(0.75, 1.1)
+    const y = h * 0.78 - r * rand(0.25, 0.95)
+    const grad = g.createRadialGradient(x, y, 0, x, y, r)
+    grad.addColorStop(0, `rgba(${style.light},1)`)
+    grad.addColorStop(0.55, `rgba(${style.light},1)`)
+    grad.addColorStop(1, `rgba(${style.light},0)`)
+    g.fillStyle = grad
+    g.beginPath()
+    g.arc(x, y, r, 0, Math.PI * 2)
+    g.fill()
+  }
+  // Shade the underside so clouds read as volumes rather than flat shapes
+  g.globalCompositeOperation = "source-atop"
+  const shade = g.createLinearGradient(0, h * 0.2, 0, h)
+  shade.addColorStop(0, "rgba(0,0,0,0)")
+  shade.addColorStop(1, style.shadow)
+  g.fillStyle = shade
+  g.fillRect(0, 0, w, h)
+  // Soft flat base
+  g.globalCompositeOperation = "destination-out"
+  const base = g.createLinearGradient(0, h * 0.7, 0, h * 0.92)
+  base.addColorStop(0, "rgba(0,0,0,0)")
+  base.addColorStop(1, "rgba(0,0,0,1)")
+  g.fillStyle = base
+  g.fillRect(0, 0, w, h)
+  return c
+}
+
+function cloudPainter(style: CloudStyle, layers: CloudLayerSpec[]): Painter {
+  type Cloud = { img: HTMLCanvasElement; x: number; y: number; speed: number; alpha: number }
+  let clouds: Cloud[] = []
+  return {
+    resize(w, h) {
+      clouds = layers.flatMap((l) => Array.from({ length: l.count }, (_, i) => {
+        const cw = Math.round(Math.min(900, w * rand(l.size[0], l.size[1])) + 120)
+        return {
+          img: makeCloud(cw, style),
+          x: ((i + rand(0, 0.8)) / l.count) * (w + cw) - cw,
+          y: h * rand(l.y[0], l.y[1]) - cw * 0.3,
+          speed: l.speed * rand(0.8, 1.2),
+          alpha: l.alpha,
+        }
+      }))
+    },
+    frame(ctx, w, _h, _t, dt) {
+      for (const c of clouds) {
+        ctx.globalAlpha = c.alpha
+        ctx.drawImage(c.img, c.x, c.y)
+        c.x += c.speed * dt
+        if (c.x > w + 20) c.x = -c.img.width - rand(0, 200)
+      }
+      ctx.globalAlpha = 1
+    },
+  }
+}
+
+const CLOUD_STYLES = {
+  day: { light: "255,255,255", shadow: "rgba(118,138,168,0.75)" },
+  grey: { light: "214,221,231", shadow: "rgba(96,108,128,0.85)" },
+  night: { light: "92,106,132", shadow: "rgba(18,24,38,0.85)" },
+  rain: { light: "84,95,114", shadow: "rgba(22,28,40,0.9)" },
+  storm: { light: "58,66,84", shadow: "rgba(8,11,18,0.95)" },
+} satisfies Record<string, CloudStyle>
+
+const FEW: CloudLayerSpec[] = [
+  { count: 3, size: [0.16, 0.24], y: [0.08, 0.3], speed: 0.006, alpha: 0.55 },
+  { count: 2, size: [0.3, 0.42], y: [0.2, 0.45], speed: 0.012, alpha: 0.9 },
+]
+const BROKEN: CloudLayerSpec[] = [
+  { count: 5, size: [0.2, 0.3], y: [0.0, 0.3], speed: 0.006, alpha: 0.7 },
+  { count: 4, size: [0.34, 0.5], y: [0.12, 0.45], speed: 0.011, alpha: 0.9 },
+  { count: 3, size: [0.5, 0.7], y: [0.35, 0.6], speed: 0.018, alpha: 1 },
+]
+const OVERCAST: CloudLayerSpec[] = [
+  { count: 7, size: [0.3, 0.45], y: [-0.1, 0.25], speed: 0.008, alpha: 0.95 },
+  { count: 6, size: [0.45, 0.65], y: [0.1, 0.45], speed: 0.014, alpha: 1 },
+  { count: 4, size: [0.6, 0.85], y: [0.35, 0.65], speed: 0.022, alpha: 1 },
+]
+
+function Clouds({ style, layers, running }: { style: CloudStyle; layers: CloudLayerSpec[]; running: boolean }) {
+  const create = useCallback(() => cloudPainter(style, layers), [style, layers])
+  return <SceneCanvas create={create} running={running} />
+}
+
+function FogBands() {
   return (
-    <div className="absolute inset-0 overflow-hidden">
-      {[0, 1, 2].map((i) => (
-        <div
-          key={i}
-          className="sky-beam absolute -top-1/4 right-[10%] h-[160%] w-[22vmin] origin-top bg-gradient-to-b from-amber-100/25 via-amber-50/10 to-transparent blur-2xl"
-          style={{ rotate: `${28 + i * 14}deg`, animationDelay: `${-i * 4}s`, animationDuration: `${12 + i * 3}s` }}
-        />
+    <>
+      {["top-[18%]", "top-[42%]", "top-[64%]"].map((pos, i) => (
+        <div key={pos} className={cn("sky-drift absolute -inset-x-1/4 h-[28%] bg-gradient-to-r from-transparent via-white/45 to-transparent blur-2xl", pos)}
+          style={{ animationDelay: `${-i * 5}s`, animationDuration: `${16 + i * 6}s` }} />
       ))}
+    </>
+  )
+}
+
+function Sun({ strength = 1 }: { strength?: number }) {
+  return (
+    <div className="absolute top-[4%] right-[8%] size-0" style={{ opacity: strength }}>
+      <div className="sky-breathe absolute -translate-1/2 size-[110vmin] rounded-full bg-[radial-gradient(circle,rgba(255,236,190,0.55)_0%,rgba(255,214,140,0.22)_22%,rgba(255,200,120,0)_55%)]" />
+      <div className="absolute -translate-1/2 size-[28vmin] rounded-full bg-[radial-gradient(circle,rgba(255,250,235,1)_0%,rgba(255,238,190,0.85)_25%,rgba(255,220,150,0)_70%)]" />
+      <div className="absolute -translate-1/2 size-[7vmin] min-h-12 min-w-12 rounded-full bg-[#fffdf5] shadow-[0_0_60px_20px_rgba(255,244,210,0.9)]" />
+      {/* lens flare ghosts along the diagonal */}
+      <div className="sky-flare absolute left-[-30vmin] top-[22vmin] size-[9vmin] rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.18),transparent_70%)]" />
+      <div className="sky-flare absolute left-[-52vmin] top-[40vmin] size-[4vmin] rounded-full bg-[radial-gradient(circle,rgba(190,220,255,0.28),transparent_70%)] [animation-delay:-3s]" />
+      <div className="sky-flare absolute left-[-74vmin] top-[58vmin] size-[14vmin] rounded-full border border-white/10 bg-[radial-gradient(circle,rgba(255,230,200,0.08),transparent_70%)] [animation-delay:-6s]" />
     </div>
   )
 }
 
-/* ─── Clouds ───────────────────────────────────────────────────────────────── */
-
-function CloudShape({ className, style }: { className?: string; style?: CSSProperties }) {
+function Moon({ strength = 1 }: { strength?: number }) {
   return (
-    <svg viewBox="0 0 320 140" className={className} style={style}>
-      <g fill="currentColor">
-        <ellipse cx="90" cy="92" rx="72" ry="42" />
-        <ellipse cx="160" cy="70" rx="80" ry="58" />
-        <ellipse cx="236" cy="94" rx="70" ry="40" />
-        <rect x="40" y="92" width="240" height="40" rx="20" />
-      </g>
-    </svg>
-  )
-}
-
-function Clouds({ tone, count, speed = 1 }: { tone: string; count: number; speed?: number }) {
-  const layout = [
-    { top: 6, size: 46, dur: 90, delay: 0 },
-    { top: 22, size: 34, dur: 120, delay: -40 },
-    { top: 40, size: 56, dur: 150, delay: -90 },
-    { top: 12, size: 28, dur: 75, delay: -20 },
-    { top: 58, size: 40, dur: 130, delay: -60 },
-    { top: 30, size: 62, dur: 170, delay: -120 },
-  ]
-  return (
-    <div className="absolute inset-0 overflow-hidden">
-      {layout.slice(0, count).map((c, i) => (
-        <CloudShape
-          key={i}
-          className={cn("sky-cloud-move absolute left-0 blur-[2px]", tone)}
-          style={{ top: `${c.top}%`, width: `${c.size}vw`, animationDuration: `${c.dur / speed}s`, animationDelay: `${c.delay / speed}s` }}
-        />
-      ))}
+    <div className="absolute top-[9%] right-[12%] size-0" style={{ opacity: strength }}>
+      <div className="sky-breathe absolute -translate-1/2 size-[60vmin] rounded-full bg-[radial-gradient(circle,rgba(200,215,255,0.22)_0%,rgba(200,215,255,0)_55%)]" />
+      <div className="absolute -translate-1/2 size-[9vmin] min-h-16 min-w-16 rounded-full bg-[radial-gradient(circle_at_38%_35%,#fbfdff,#dfe7f5_55%,#b7c4dc)] shadow-[0_0_50px_12px_rgba(205,220,255,0.35)]" />
     </div>
   )
 }
 
-/* ─── Night ────────────────────────────────────────────────────────────────── */
+/* ─── Scenes ───────────────────────────────────────────────────────────────── */
 
-function Moon() {
-  return (
-    <div className="absolute top-[8vh] right-[10vw] size-[18vmin] min-h-24 min-w-24">
-      <div className="sky-pulse absolute -inset-[60%] rounded-full bg-[radial-gradient(circle,rgba(210,225,255,0.35)_0%,rgba(210,225,255,0)_65%)]" />
-      <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_35%_35%,#f8fbff,#d8e2f3_60%,#aab8d4)] shadow-[0_0_60px_10px_rgba(200,215,255,0.35)]" />
-      <div className="absolute top-[28%] left-[52%] size-[16%] rounded-full bg-slate-400/25" />
-      <div className="absolute top-[55%] left-[30%] size-[11%] rounded-full bg-slate-400/20" />
-    </div>
-  )
+const LOADING_GRADIENT = "linear-gradient(180deg,#0b1220 0%,#111c33 55%,#0b1220 100%)"
+
+function sceneGradient(s: SkyScene | null): string {
+  if (!s) return LOADING_GRADIENT
+  const day = s.isDay
+  switch (s.condition) {
+    case "Clear": return day ? "linear-gradient(180deg,#1760c4 0%,#2f85e0 38%,#7dbcf0 72%,#b9dcf6 100%)" : "linear-gradient(180deg,#040817 0%,#0a1433 45%,#1a2a55 100%)"
+    case "Clouds": return day ? "linear-gradient(180deg,#56779e 0%,#7a95b5 45%,#a9bacc 100%)" : "linear-gradient(180deg,#0c1220 0%,#1a2233 55%,#2b3547 100%)"
+    case "Rain": case "Drizzle": return day ? "linear-gradient(180deg,#27313f 0%,#3a4657 50%,#56657a 100%)" : "linear-gradient(180deg,#0b0f17 0%,#161d29 55%,#252e3d 100%)"
+    case "Thunderstorm": return day ? "linear-gradient(180deg,#141a26 0%,#212a3a 50%,#343f53 100%)" : "linear-gradient(180deg,#07090f 0%,#10151f 55%,#1d2433 100%)"
+    case "Snow": return day ? "linear-gradient(180deg,#7f92a9 0%,#a3b3c5 50%,#cdd7e2 100%)" : "linear-gradient(180deg,#141b27 0%,#253042 55%,#394659 100%)"
+    default: return day ? "linear-gradient(180deg,#76808d 0%,#98a1ab 50%,#bcc3ca 100%)" : "linear-gradient(180deg,#121720 0%,#222935 55%,#343c49 100%)"
+  }
 }
 
-/* ─── Scene ────────────────────────────────────────────────────────────────── */
-
-export function Sky({ condition, isDay, paused, active = true, cloudCover = 50 }: {
-  condition: Condition
-  isDay: boolean
-  paused: boolean
-  active?: boolean
-  cloudCover?: number | null
-}) {
-  const gradient = GRADIENTS[`${condition}-${isDay ? "day" : "night"}`] ?? GRADIENTS["Clouds-day"]
-  const rainy = condition === "Rain" || condition === "Drizzle" || condition === "Thunderstorm"
-  const partly = condition === "Clouds" && (cloudCover ?? 50) < 75
-  const running = !paused && active
+function Scene({ scene, running }: { scene: SkyScene | null; running: boolean }) {
+  const c = scene?.condition
+  const day = scene?.isDay ?? true
+  const rainy = c === "Rain" || c === "Drizzle" || c === "Thunderstorm"
+  const partly = c === "Clouds" && (scene?.cloudCover ?? 60) < 75
+  const rain = useCallback(() => rainPainter(c === "Drizzle" ? 0.55 : c === "Thunderstorm" ? 1.3 : 1, c === "Thunderstorm"), [c])
+  const stars = useCallback(() => starPainter(c === "Clear" ? 1 : 0.35), [c])
+  const snow = useCallback(() => snowPainter(), [])
 
   return (
-    <div aria-hidden="true" data-paused={!running || undefined}
-      className={cn("sky fixed inset-0 -z-10 overflow-hidden bg-gradient-to-b transition-colors duration-1000", gradient)}>
-      {condition === "Clear" && isDay && (
+    <div className="absolute inset-0" style={{ background: sceneGradient(scene) }} data-paused={!running || undefined}>
+      {c === "Clear" && day && (
         <>
-          <SunBeams />
           <Sun />
-          {!paused && <Particles className="absolute inset-0" quantity={60} staticity={80} ease={80} size={1.1} color="#fff3c4" vy={-0.08} />}
+          <Clouds style={CLOUD_STYLES.day} layers={FEW.slice(0, 1)} running={running} />
+          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-white/10 to-transparent" />
         </>
       )}
+      {c === "Clear" && !day && (<><SceneCanvas create={stars} running={running} /><Moon /></>)}
 
-      {condition === "Clear" && !isDay && (
+      {c === "Clouds" && (
         <>
-          {!paused && <Particles className="absolute inset-0" quantity={220} staticity={95} ease={90} size={0.7} color="#e3ecff" />}
-          <div className="sky-twinkle absolute inset-0 bg-[radial-gradient(1px_1px_at_20%_30%,white,transparent),radial-gradient(1px_1px_at_70%_20%,white,transparent),radial-gradient(1.5px_1.5px_at_40%_60%,white,transparent),radial-gradient(1px_1px_at_85%_55%,white,transparent),radial-gradient(1.5px_1.5px_at_10%_75%,white,transparent)]" />
-          <Moon />
-        </>
-      )}
-
-      {condition === "Clouds" && (
-        <>
-          {partly && isDay && <Sun dim />}
-          {partly && !isDay && <Moon />}
-          <Clouds tone={isDay ? "text-white/70" : "text-slate-400/30"} count={partly ? 4 : 6} />
+          {!day && <SceneCanvas create={stars} running={running} />}
+          {partly && (day ? <Sun strength={0.8} /> : <Moon strength={0.8} />)}
+          <Clouds style={day ? (partly ? CLOUD_STYLES.day : CLOUD_STYLES.grey) : CLOUD_STYLES.night}
+            layers={partly ? BROKEN : OVERCAST} running={running} />
         </>
       )}
 
       {rainy && (
         <>
-          <Clouds tone={condition === "Thunderstorm" ? "text-slate-900/70" : "text-slate-800/60"} count={6} speed={1.6} />
-          <div className="absolute inset-0 bg-gradient-to-b from-slate-900/30 via-transparent to-slate-900/40" />
-          {!paused && (
-            <RainCanvas intensity={condition === "Drizzle" ? 0.5 : condition === "Thunderstorm" ? 1.4 : 1} lightning={condition === "Thunderstorm"} running={active} />
-          )}
-          <div className="sky-mist absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-slate-300/15 to-transparent" />
+          <Clouds style={c === "Thunderstorm" ? CLOUD_STYLES.storm : CLOUD_STYLES.rain} layers={OVERCAST} running={running} />
+          <SceneCanvas create={rain} running={running} />
+          <div className="sky-drift absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-slate-300/20 to-transparent" />
         </>
       )}
 
-      {condition === "Snow" && (
+      {c === "Snow" && (
         <>
-          <Clouds tone={isDay ? "text-white/60" : "text-slate-400/30"} count={5} speed={0.8} />
-          {!paused && <Particles className="absolute inset-0" quantity={220} staticity={60} ease={50} size={1.8} color="#ffffff" vy={0.7} vx={0.15} />}
+          <Clouds style={day ? CLOUD_STYLES.grey : CLOUD_STYLES.night} layers={BROKEN} running={running} />
+          <SceneCanvas create={snow} running={running} />
         </>
       )}
 
-      {(condition === "Mist" || condition === "Fog") && (
+      {(c === "Mist" || c === "Fog") && (
         <>
-          <Clouds tone="text-slate-100/40" count={6} speed={0.6} />
-          <div className="sky-mist absolute inset-0 bg-[linear-gradient(180deg,transparent_0%,rgba(226,232,240,0.25)_45%,rgba(226,232,240,0.35)_100%)]" />
+          <Clouds style={day ? CLOUD_STYLES.grey : CLOUD_STYLES.night} layers={FEW} running={running} />
+          <FogBands />
         </>
       )}
 
-      {/* keeps text readable further down the page */}
-      <div className="absolute inset-x-0 bottom-0 h-[40vh] bg-gradient-to-b from-transparent to-[#0b1220]" />
+      {/* Page content below the dashboard stays readable */}
+      <div className="absolute inset-x-0 bottom-0 h-[42vh] bg-gradient-to-b from-transparent to-[#0b1220]" />
     </div>
   )
 }
 
-/** Light rain drawn in front of the page content, as in rain running over glass. */
-export function ForegroundRain({ condition, paused, active }: { condition: Condition; paused: boolean; active: boolean }) {
-  const rainy = condition === "Rain" || condition === "Drizzle" || condition === "Thunderstorm"
+function sceneKey(s: SkyScene | null) {
+  if (!s) return "loading"
+  const partly = s.condition === "Clouds" && (s.cloudCover ?? 60) < 75
+  return `${s.condition}-${s.isDay ? "day" : "night"}-${partly ? "partly" : "full"}`
+}
+
+/** Background scene; cross-fades when the weather changes (including from the loading state). */
+export function Sky({ scene, paused, active = true }: { scene: SkyScene | null; paused: boolean; active?: boolean }) {
+  const key = sceneKey(scene)
+  const [layers, setLayers] = useState<{ key: string; scene: SkyScene | null }[]>([{ key, scene }])
+
+  useEffect(() => {
+    setLayers((prev) => (prev[prev.length - 1].key === key ? prev : [...prev.slice(-1), { key, scene }]))
+    const t = setTimeout(() => setLayers((prev) => prev.slice(-1)), 1800)
+    return () => clearTimeout(t)
+    // scene identity changes with every fetch; the key captures what's visible
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+
+  return (
+    <div aria-hidden="true" className="sky fixed inset-0 -z-10 overflow-hidden bg-[#0b1220]">
+      {layers.map((l, i) => {
+        const current = i === layers.length - 1
+        return (
+          <div key={l.key} className={cn("absolute inset-0", current && layers.length > 1 && "sky-fade-in")}>
+            <Scene scene={l.scene} running={current && !paused && active} />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Light rain drawn in front of the page content, like rain running over glass. */
+export function ForegroundRain({ scene, paused, active }: { scene: SkyScene | null; paused: boolean; active: boolean }) {
+  const c = scene?.condition
+  const rainy = c === "Rain" || c === "Drizzle" || c === "Thunderstorm"
+  const create = useCallback(() => rainPainter(c === "Drizzle" ? 0.1 : 0.2, false), [c])
   if (!rainy || paused) return null
   return (
-    <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-30 opacity-45">
-      <RainCanvas intensity={condition === "Drizzle" ? 0.12 : 0.25} lightning={false} running={active} />
+    <div aria-hidden="true" className="sky-fade-in pointer-events-none fixed inset-0 z-30 opacity-40">
+      <SceneCanvas create={create} running={active} />
     </div>
   )
 }
