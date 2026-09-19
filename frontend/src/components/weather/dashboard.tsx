@@ -27,10 +27,10 @@ function CardTitle({ icon, children, id }: { icon: ReactNode; children: ReactNod
 
 function Tile({ icon, label, value, note }: { icon: ReactNode; label: string; value: ReactNode; note?: ReactNode }) {
   return (
-    <div className="flex h-full min-h-32 min-w-0 flex-col gap-1 rounded-2xl border border-white/15 bg-slate-950/30 p-4 backdrop-blur-[3px] [text-shadow:0_1px_2px_rgb(0_0_0/0.35)] transition-colors hover:border-white/20 sm:min-h-36">
+    <div className="flex h-full min-w-0 flex-col gap-2 rounded-2xl border border-white/15 bg-slate-950/30 p-4 [text-shadow:0_1px_2px_rgb(0_0_0/0.35)] transition-colors hover:border-white/20">
       <CardTitle icon={icon}>{label}</CardTitle>
-      <div className="mt-1 text-3xl font-medium tabular-nums text-white sm:text-4xl">{value}</div>
-      {note && <p className="mt-auto text-pretty text-[13px] leading-snug text-white/65">{note}</p>}
+      <div className="text-3xl font-medium tabular-nums text-white sm:text-4xl">{value}</div>
+      {note && <p className="text-pretty text-[13px] leading-snug text-white/65">{note}</p>}
     </div>
   )
 }
@@ -83,7 +83,7 @@ export function SearchBar({ onSelect, onLocate, busy }: {
       className="relative z-30"
       onSubmit={(e) => { e.preventDefault(); choose(places[active]) }}
     >
-      <div className="flex items-center gap-2 rounded-full border border-white/15 bg-slate-950/30 p-1.5 pl-4 backdrop-blur-[3px] focus-within:ring-2 focus-within:ring-sky-300/60">
+      <div className="flex items-center gap-2 rounded-full border border-white/15 bg-slate-950/30 p-1.5 pl-4 focus-within:ring-2 focus-within:ring-sky-300/60">
         <MapPin aria-hidden="true" className="size-4 shrink-0 text-white/70" />
         <label htmlFor={id} className="sr-only">Search for a city</label>
         <Input
@@ -327,7 +327,7 @@ function buildView(data: Data, sel: Selection, units: Units): View {
 }
 
 // Light glass: mostly see-through so the live sky stays visible; a soft text shadow keeps text readable.
-const card = "rounded-3xl border border-white/15 bg-slate-950/30 backdrop-blur-[3px] [text-shadow:0_1px_2px_rgb(0_0_0/0.35)] shadow-[0_12px_40px_-18px_rgba(0,0,0,0.7)]"
+const card = "rounded-3xl border border-white/15 bg-slate-950/30 [text-shadow:0_1px_2px_rgb(0_0_0/0.35)] shadow-[0_12px_40px_-18px_rgba(0,0,0,0.7)]"
 const choice = "flex w-[4.75rem] flex-col items-center rounded-2xl px-2 py-3 outline-none transition-colors sm:w-[5.25rem] focus-visible:ring-2 focus-visible:ring-sky-300"
 
 export function WeatherDashboard({ data, units, search }: { data: Data; units: Units; search: ReactNode }) {

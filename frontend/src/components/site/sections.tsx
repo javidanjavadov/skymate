@@ -27,7 +27,7 @@ function SectionHead({ kicker, title, children, id }: { kicker: string; title: s
   )
 }
 
-const glass = "rounded-3xl border border-white/10 bg-slate-950/30 backdrop-blur-[3px]"
+const glass = "rounded-3xl border border-white/10 bg-slate-950/30"
 
 export function Stats() {
   const [s, setS] = useState<{ readings: number; stations: number; days: number } | null>(null)

@@ -198,7 +198,7 @@ function makeCloud(w: number, style: CloudStyle): HTMLCanvasElement {
     const y = h * 0.78 - r * rand(0.25, 0.95)
     const grad = g.createRadialGradient(x, y, 0, x, y, r)
     grad.addColorStop(0, `rgba(${style.light},1)`)
-    grad.addColorStop(0.78, `rgba(${style.light},1)`)
+    grad.addColorStop(0.9, `rgba(${style.light},1)`)
     grad.addColorStop(1, `rgba(${style.light},0)`)
     g.fillStyle = grad
     g.beginPath()
