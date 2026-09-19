@@ -1,42 +1,41 @@
-"""Public website: pages, static assets and the keyless weather demo used by the home page."""
+"""Public website: the single-page app, its data endpoints and SEO files.
+
+The front end lives in /frontend (React + shadcn/ui + Magic UI) and is built into static/web.
+"""
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytz
 from fastapi import APIRouter, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from . import forecast, security
 
-STATIC = Path(__file__).parent / "static"
+WEB = Path(__file__).parent / "static" / "web"
 router = APIRouter(include_in_schema=False)
-demo_limiter = security.SlidingWindow(20, 60)
+demo_limiter = security.SlidingWindow(30, 60)
 
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "skymatee_bot")
+APP_PAGES = ("/", "/terms", "/privacy")
 
 
-def _page(name: str) -> HTMLResponse:
-    return HTMLResponse((STATIC / name).read_text(encoding="utf-8"), headers={"Cache-Control": "public, max-age=300"})
+def _index() -> HTMLResponse:
+    index = WEB / "index.html"
+    if not index.exists():
+        return HTMLResponse("<h1>SkyMate</h1><p>Website build missing. Run <code>npm run build</code> in /frontend.</p>",
+                            status_code=503)
+    return HTMLResponse(index.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
-@router.get("/")
-def home():
-    return _page("home.html")
-
-
-@router.get("/terms")
-def terms():
-    return _page("terms.html")
-
-
-@router.get("/privacy")
-def privacy():
-    return _page("privacy.html")
+for _path in APP_PAGES:
+    router.add_api_route(_path, _index, methods=["GET"])
 
 
 @router.get("/robots.txt")
 def robots():
-    return HTMLResponse("User-agent: *\nAllow: /\nDisallow: /console-\nDisallow: /v1/\n", media_type="text/plain")
+    return PlainTextResponse("User-agent: *\nAllow: /\nDisallow: /console-\nDisallow: /v1/\nDisallow: /site/\n")
 
 
 @router.get("/site/api/info")
@@ -44,32 +43,106 @@ def info():
     return {"bot": BOT_USERNAME, "premium_stars": int(os.environ.get("PREMIUM_STARS", "150"))}
 
 
-def _demo(q: str) -> dict:
-    loc = forecast.resolve_location(q)
+def _local_hour(iso: str, tz) -> datetime:
+    return datetime.fromisoformat(iso).astimezone(tz)
+
+
+def _dashboard(q: str | None, lat: float | None, lon: float | None) -> dict:
+    loc = forecast.resolve_location(q, lat, lon)
     cur = forecast.current(loc)
-    days = forecast.daily(loc, 5)["daily"]
-    c, obs = cur["current"] or {}, cur.get("observed")
+    hourly = forecast.hourly(loc, 48)["hourly"]
+    daily = forecast.daily(loc, 10)["daily"]
+    try:
+        alerts = forecast.alerts(loc, 72)["alerts"]
+    except forecast.NoData:
+        alerts = []
+    tz = pytz.timezone(loc["timezone"])
+    now = datetime.now(timezone.utc)
+    c = cur["current"] or {}
+    obs = cur.get("observed")
+
+    def measured(field):
+        return obs.get(field) if obs and obs.get(field) is not None else c.get(field)
+
+    # Precipitation: rates are mm/h at each step; integrate over the step length.
+    def rain_between(start: datetime, end: datetime) -> float:
+        total = 0.0
+        for a, b in zip(hourly, hourly[1:]):
+            ta, tb = datetime.fromisoformat(a["time"]), datetime.fromisoformat(b["time"])
+            if tb <= start or ta >= end:
+                continue
+            hours = (min(tb, end) - max(ta, start)).total_seconds() / 3600
+            total += max(0.0, a.get("precipitation_rate") or 0.0) * hours
+        return round(total, 1)
+
+    local_midnight = now.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    today = daily[0] if daily else {}
+    protect_until = None
+    for h in hourly:
+        t = _local_hour(h["time"], tz)
+        if t.date() == now.astimezone(tz).date() and (h.get("uv_index") or 0) >= 3:
+            protect_until = t.isoformat()
+
+    # A real measurement beats the model: keep "now", the first hourly slot and today's range consistent with it.
+    shown_now = measured("temperature")
+    hourly_out = [{"time": h["time"], "temperature": h["temperature"], "condition": h["condition"],
+                   "is_day": h["is_day"], "precipitation_rate": h.get("precipitation_rate")}
+                  for h in hourly if datetime.fromisoformat(h["time"]) >= now - timedelta(hours=2)][:12]
+    daily_out = [{"date": d["date"], "min": d["temp_min"], "max": d["temp_max"], "condition": d["condition"],
+                  "description": d["description"], "precipitation": d["precipitation_sum"]} for d in daily]
+    if shown_now is not None:
+        if hourly_out:
+            hourly_out[0]["temperature"] = shown_now
+        if daily_out:
+            if daily_out[0]["max"] is None or shown_now > daily_out[0]["max"]:
+                daily_out[0]["max"] = shown_now
+            if daily_out[0]["min"] is None or shown_now < daily_out[0]["min"]:
+                daily_out[0]["min"] = shown_now
+
     return {
-        "place": loc["name"], "country": loc.get("country", ""), "timezone": loc["timezone"],
-        "temperature": obs["temperature"] if obs and obs.get("temperature") is not None else c.get("temperature"),
-        "feels_like": c.get("feels_like"), "humidity": (obs or {}).get("humidity") or c.get("humidity"),
-        "wind_speed": (obs or {}).get("wind_speed") or c.get("wind_speed"),
-        "description": c.get("description") or (obs or {}).get("weather") or "",
-        "condition": c.get("condition"), "is_day": c.get("is_day", True),
+        "location": {"name": loc["name"], "country": loc.get("country", ""), "timezone": loc["timezone"],
+                     "lat": loc["lat"], "lon": loc["lon"]},
+        "now": {
+            "temperature": measured("temperature"),
+            "feels_like": c.get("feels_like"),
+            "humidity": measured("humidity"),
+            "dew_point": measured("dew_point"),
+            "pressure": measured("pressure"),
+            "wind_speed": measured("wind_speed"),
+            "wind_gust": measured("wind_gust"),
+            "wind_direction": measured("wind_direction"),
+            "visibility": measured("visibility"),
+            "cloud_cover": c.get("cloud_cover"),
+            "condition": c.get("condition") or "Clouds",
+            "description": c.get("description") or (obs or {}).get("weather") or "",
+            "is_day": c.get("is_day", True),
+            "uv_index": c.get("uv_index"),
+        },
         "measured": {"station": obs["station"]["name"], "distance_km": obs["station"]["distance_km"],
-                     "age_minutes": obs["age_minutes"]} if obs else None,
-        "days": [{"date": d["date"], "min": d["temp_min"], "max": d["temp_max"], "condition": d["condition"],
-                  "description": d["description"]} for d in days],
+                     "age_minutes": obs["age_minutes"], "time": obs["time"]} if obs else None,
+        "sun": cur.get("sun", {}),
+        "precipitation": {"today_mm": rain_between(local_midnight.astimezone(timezone.utc), now),
+                          "next_24h_mm": rain_between(now, now + timedelta(hours=24))},
+        "uv": {"now": c.get("uv_index"), "max_today": today.get("uv_max"), "protect_until": protect_until},
+        "hourly": hourly_out,
+        "daily": daily_out,
+        "alerts": [{"event": a["event"], "severity": a["severity"], "start": a["start"], "end": a["end"]}
+                   for a in alerts[:3]],
+        "meta": {"source": cur["meta"].get("source"), "data_age_hours": cur["meta"].get("data_age_hours")},
     }
 
 
 @router.get("/site/api/weather")
-async def demo_weather(request: Request, q: str = Query(..., min_length=1, max_length=100)):
+async def site_weather(request: Request, q: str | None = Query(None, min_length=1, max_length=100),
+                       lat: float | None = Query(None, ge=-90, le=90), lon: float | None = Query(None, ge=-180, le=180)):
     if not demo_limiter.allow(security.client_ip(request)):
-        return JSONResponse({"error": "Too many searches. Try again in a minute."}, status_code=429)
+        return JSONResponse({"error": "Too many searches. Wait a minute, then try again."}, status_code=429)
+    if not q and (lat is None or lon is None):
+        return JSONResponse({"error": "Enter a city name."}, status_code=400)
     try:
-        return await run_in_threadpool(_demo, q.strip())
+        return await run_in_threadpool(_dashboard, q.strip() if q else None, lat, lon)
     except forecast.NotFound:
-        return JSONResponse({"error": "We couldn't find that place."}, status_code=404)
+        return JSONResponse({"error": "That place wasn't found. Check the spelling or add the country, e.g. “Paris, FR”."},
+                            status_code=404)
     except forecast.NoData:
-        return JSONResponse({"error": "Weather data is updating. Try again shortly."}, status_code=503)
+        return JSONResponse({"error": "Weather data is updating. Try again in a few minutes."}, status_code=503)

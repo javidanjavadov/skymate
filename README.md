@@ -27,6 +27,20 @@ measurements, so it keeps answering from stored data when upstream sources are u
 
 Attribution is included in every API response and must be kept in customer-facing terms.
 
+## Website
+
+`frontend/` is a React + TypeScript app (Vite, Tailwind, shadcn/ui, Magic UI). The production build is written to
+`skymate_api/static/web` and committed, so the Python host needs no Node.js build step.
+
+```bash
+cd frontend
+npm install
+npm run dev     # http://localhost:5173, proxies /site and /v1 to the API on :8000
+npm run build   # rebuild before committing website changes
+```
+
+The design follows Vercel's Web Interface Guidelines (skill in `.agents/skills/web-design-guidelines`).
+
 ## Running locally
 
 ```bash

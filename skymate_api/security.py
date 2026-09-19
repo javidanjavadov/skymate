@@ -32,7 +32,7 @@ _BASE_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "geolocation=(), camera=(), microphone=(), payment=()",
+    "Permissions-Policy": "geolocation=(self), camera=(), microphone=(), payment=()",
     "Cross-Origin-Opener-Policy": "same-origin",
 }
 _HTML_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "

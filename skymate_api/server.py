@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -88,7 +88,14 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"],
 app.include_router(site.router)
 app.include_router(admin_panel.router)
 app.include_router(hosting.router)
-app.mount("/assets", StaticFiles(directory=STATIC / "assets"), name="assets")
+(STATIC / "web" / "app").mkdir(parents=True, exist_ok=True)
+app.mount("/app", StaticFiles(directory=STATIC / "web" / "app"), name="web-assets")
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+def favicon():
+    return FileResponse(STATIC / "web" / "favicon.svg", media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ─── Middleware: request id, public rate limit, security headers ─────────────

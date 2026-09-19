@@ -11,3 +11,6 @@ dist/
 *.db-shm
 *.db-wal
 .pytest_cache/
+node_modules/
+frontend/node_modules/
+.claude/skills/
