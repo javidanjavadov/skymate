@@ -175,7 +175,7 @@ function Compass({ deg }: { deg: number | null }) {
         <text key={l as string} x={x as number} y={y as number} textAnchor="middle" fontSize="11" fill="white" fontWeight="600">{l}</text>
       ))}
       {deg != null && (
-        <g style={{ transformBox: "fill-box" }} transform={`rotate(${rotate} 60 60)`}>
+        <g transform={`rotate(${rotate} 60 60)`}>
           <path d="M60 26 L66 60 L60 56 L54 60 Z" fill="white" />
           <path d="M60 94 L54 60 L60 64 L66 60 Z" fill="rgba(255,255,255,0.45)" />
         </g>
