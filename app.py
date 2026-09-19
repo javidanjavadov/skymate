@@ -15,9 +15,8 @@ import pytz
 
 from skymate_client import SkyMate, SkyMateError
 
-# Change to your public server address before building the .exe for other people.
-DEFAULT_API_URL = "http://127.0.0.1:8000"
-BOT_USERNAME = "SkyMate bot"
+DEFAULT_API_URL = "https://skymate-thfc.onrender.com"
+BOT_USERNAME = "@skymatee_bot"
 
 APP_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SkyMate")
 os.makedirs(APP_DIR, exist_ok=True)
