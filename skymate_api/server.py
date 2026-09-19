@@ -1,5 +1,6 @@
 import logging
 import secrets
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -45,10 +46,21 @@ async def _startup():
         log.exception("City database could not be loaded; geocoding unavailable until next start")
     scheduler.start()
     hosting.start_keepalive()
+    if store.IS_PG:
+        threading.Thread(target=_database_selftest, name="skymate-selftest", daemon=True).start()
     try:
         await hosting.start_bot()
     except Exception:
         log.exception("Telegram bot failed to start")
+
+
+def _database_selftest():
+    """Runs scripts/db_smoke_test.py on startup so Postgres-only query bugs show up in the log immediately."""
+    import runpy
+    try:
+        runpy.run_path(str(Path(__file__).resolve().parent.parent / "scripts" / "db_smoke_test.py"), run_name="__main__")
+    except Exception:
+        log.exception("DATABASE SELF-TEST FAILED")
 
 
 @app.on_event("shutdown")
