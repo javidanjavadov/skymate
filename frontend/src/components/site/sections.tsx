@@ -27,7 +27,7 @@ function SectionHead({ kicker, title, children, id }: { kicker: string; title: s
   )
 }
 
-const glass = "rounded-3xl border border-white/10 bg-slate-950/75"
+const glass = "rounded-3xl border border-white/10 bg-slate-950/30 backdrop-blur-[3px]"
 
 export function Stats() {
   const [s, setS] = useState<{ readings: number; stations: number; days: number } | null>(null)
@@ -49,17 +49,17 @@ export function Stats() {
     { label: "Days of Forecast", value: s?.days },
   ]
   return (
-    <section aria-label="Service statistics" className={cn(glass, "grid grid-cols-1 divide-y divide-white/10 sm:grid-cols-4 sm:divide-x sm:divide-y-0")}>
+    <section aria-label="Service statistics" className={cn(glass, "grid grid-cols-2 lg:grid-cols-4 [&>*]:min-w-0 [&>*]:border-white/10 max-lg:[&>*:nth-child(-n+2)]:border-b max-lg:[&>*:nth-child(odd)]:border-r lg:[&>*:not(:first-child)]:border-l")}>
       {items.map((it) => (
-        <div key={it.label} className="px-6 py-5">
-          <p className="text-3xl font-semibold tabular-nums text-white">
+        <div key={it.label} className="px-4 py-5 sm:px-6">
+          <p className="text-2xl font-semibold tabular-nums text-white sm:text-3xl">
             {it.value ? fmt.number(it.value) : "—"}
           </p>
           <p className="text-sm text-white/60">{it.label}</p>
         </div>
       ))}
-      <div className="px-6 py-5">
-        <p className="text-3xl font-semibold text-white">Global</p>
+      <div className="px-4 py-5 sm:px-6">
+        <p className="text-2xl font-semibold text-white sm:text-3xl">Global</p>
         <p className="text-sm text-white/60">Every City in the World</p>
       </div>
     </section>
@@ -86,7 +86,7 @@ export function Features() {
           <li key={f.title} className="min-w-0">
             <BlurFade inView delay={0.05 * i} className="h-full">
               <MagicCard className="h-full rounded-3xl" gradientColor="rgba(125,190,255,0.10)" gradientFrom="#7cc7ff" gradientTo="#a78bfa">
-                <div className="h-full rounded-3xl bg-slate-950/60 p-6">
+                <div className="h-full rounded-3xl bg-slate-950/30 p-6">
                   <span className="grid size-11 place-items-center rounded-xl bg-sky-400/15 text-sky-300">
                     <f.icon aria-hidden="true" className="size-5" />
                   </span>

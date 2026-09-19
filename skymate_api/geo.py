@@ -79,6 +79,19 @@ def search(query: str, limit: int = 5) -> list[dict]:
     return [_row(r) for r in rows]
 
 
+def suggest(prefix: str, limit: int = 6) -> list[dict]:
+    """Places whose name (or an alternate name) starts with the typed text, biggest first."""
+    q = _norm(prefix)
+    if len(q) < 2:
+        return []
+    q = q.replace("%", "").replace("_", "")
+    rows = db.connect().execute(
+        "SELECT * FROM cities WHERE ascii LIKE ? OR alt LIKE ? "
+        "ORDER BY (ascii = ?) DESC, (ascii LIKE ?) DESC, population DESC LIMIT ?",
+        [f"{q}%", f"%,{q}%", q, f"{q}%", limit]).fetchall()
+    return [_row(r) for r in rows]
+
+
 def _haversine(lat1, lon1, lat2, lon2):
     r = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)

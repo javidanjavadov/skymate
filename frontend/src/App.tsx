@@ -38,18 +38,23 @@ function store(key: string, value: string) {
   }
 }
 
-function initialQuery() {
+/** `gps` marks the visitor's own position: it is never written to the address bar. */
+type Query = { q?: string; lat?: number; lon?: number; gps?: boolean }
+
+/** A place from a shared link, or null to ask the visitor for their location first. */
+function initialQuery(): Query | null {
   const p = new URLSearchParams(location.search)
   const lat = Number(p.get("lat")), lon = Number(p.get("lon"))
   if (p.has("lat") && p.has("lon") && Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon }
-  return { q: (p.get("q") ?? "").slice(0, 100) || DEFAULT_CITY }
+  const q = (p.get("q") ?? "").slice(0, 100)
+  return q ? { q } : null
 }
 
-function syncUrl(query: { q?: string; lat?: number; lon?: number }) {
+function syncUrl(query: Query) {
   const url = new URL(location.href)
   for (const k of ["q", "lat", "lon"]) url.searchParams.delete(k)
   if (query.q && query.q !== DEFAULT_CITY) url.searchParams.set("q", query.q)
-  if (query.lat !== undefined && query.lon !== undefined) {
+  if (!query.gps && query.lat !== undefined && query.lon !== undefined) {
     url.searchParams.set("lat", query.lat.toFixed(3))
     url.searchParams.set("lon", query.lon.toFixed(3))
   }
@@ -64,7 +69,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
   bot: string
   stars: number
 }) {
-  const [query, setQuery] = useState(initialQuery)
+  const [query, setQuery] = useState<Query | null>(initialQuery)
   const [data, setData] = useState<Dashboard | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(true)
@@ -79,7 +84,33 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
     return () => { io.disconnect(); setSkyActive(true) }
   }, [setSkyActive])
 
+  /** Asks for the visitor's position. On first entry a refusal (or no answer) falls back to the default city. */
+  const locate = useCallback((onEntry: boolean) => {
+    const fallback = () => setQuery((q) => q ?? { q: DEFAULT_CITY })
+    if (!("geolocation" in navigator)) {
+      if (onEntry) fallback()
+      else setError("Your browser can’t share your location. Search for your city instead.")
+      return
+    }
+    // Someone who ignores the permission prompt still gets weather; accepting later switches to their location.
+    const timer = onEntry ? setTimeout(fallback, 8000) : undefined
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { clearTimeout(timer); setQuery({ lat: pos.coords.latitude, lon: pos.coords.longitude, gps: true }) },
+      () => {
+        clearTimeout(timer)
+        if (onEntry) fallback()
+        else setError("Location access was blocked. Allow it in your browser, or search for your city.")
+      },
+      { timeout: 10_000, maximumAge: 600_000 },
+    )
+  }, [])
+
   useEffect(() => {
+    if (!initialQuery()) locate(true)
+  }, [locate])
+
+  useEffect(() => {
+    if (!query) return
     const ctrl = new AbortController()
     setBusy(true)
     setError(null)
@@ -100,21 +131,9 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
 
   useEffect(() => { if (error) errorRef.current?.focus() }, [error])
 
-  const locate = useCallback(() => {
-    if (!("geolocation" in navigator)) {
-      setError("Your browser can’t share your location. Search for your city instead.")
-      return
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setQuery({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-      () => setError("Location access was blocked. Allow it in your browser, or search for your city."),
-      { timeout: 10_000, maximumAge: 600_000 },
-    )
-  }, [])
-
   const search = (
     <div>
-      <SearchBar busy={busy} defaultValue={query.q ?? ""} onSearch={(q) => setQuery({ q })} onLocate={locate} />
+      <SearchBar busy={busy} onSelect={(p) => setQuery({ lat: p.lat, lon: p.lon })} onLocate={() => locate(false)} />
       <p ref={errorRef} tabIndex={-1} role="alert" aria-live="polite"
         className={error ? "mt-2 rounded-xl bg-red-500/15 px-3 py-2 text-sm text-red-100 outline-none" : "sr-only"}>
         {error ?? ""}
@@ -130,7 +149,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
           error ? (
             <div className="rounded-3xl border border-white/10 bg-slate-950/75 p-4">
               {search}
-              <button type="button" onClick={() => setQuery({ ...query })}
+              <button type="button" onClick={() => setQuery({ ...(query ?? { q: DEFAULT_CITY }) })}
                 className="mt-3 rounded-full bg-white px-5 py-2 text-sm font-medium text-slate-900 outline-none hover:bg-sky-100 focus-visible:ring-2 focus-visible:ring-sky-300">
                 Try Again
               </button>

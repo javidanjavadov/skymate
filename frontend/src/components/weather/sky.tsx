@@ -198,7 +198,7 @@ function makeCloud(w: number, style: CloudStyle): HTMLCanvasElement {
     const y = h * 0.78 - r * rand(0.25, 0.95)
     const grad = g.createRadialGradient(x, y, 0, x, y, r)
     grad.addColorStop(0, `rgba(${style.light},1)`)
-    grad.addColorStop(0.55, `rgba(${style.light},1)`)
+    grad.addColorStop(0.78, `rgba(${style.light},1)`)
     grad.addColorStop(1, `rgba(${style.light},0)`)
     g.fillStyle = grad
     g.beginPath()
@@ -282,7 +282,7 @@ function FogBands() {
   return (
     <>
       {["top-[18%]", "top-[42%]", "top-[64%]"].map((pos, i) => (
-        <div key={pos} className={cn("sky-drift absolute -inset-x-1/4 h-[28%] bg-gradient-to-r from-transparent via-white/45 to-transparent blur-2xl", pos)}
+        <div key={pos} className={cn("sky-drift absolute -inset-x-1/4 h-[28%] bg-gradient-to-r from-transparent via-white/45 to-transparent blur-lg", pos)}
           style={{ animationDelay: `${-i * 5}s`, animationDuration: `${16 + i * 6}s` }} />
       ))}
     </>
@@ -292,7 +292,7 @@ function FogBands() {
 function Sun({ strength = 1 }: { strength?: number }) {
   return (
     <div className="absolute top-[4%] right-[8%] size-0" style={{ opacity: strength }}>
-      <div className="sky-breathe absolute -translate-1/2 size-[110vmin] rounded-full bg-[radial-gradient(circle,rgba(255,236,190,0.55)_0%,rgba(255,214,140,0.22)_22%,rgba(255,200,120,0)_55%)]" />
+      <div className="sky-breathe absolute -translate-1/2 size-[110vmin] rounded-full bg-[radial-gradient(circle,rgba(255,236,190,0.5)_0%,rgba(255,214,140,0.16)_16%,rgba(255,200,120,0)_40%)]" />
       <div className="absolute -translate-1/2 size-[28vmin] rounded-full bg-[radial-gradient(circle,rgba(255,250,235,1)_0%,rgba(255,238,190,0.85)_25%,rgba(255,220,150,0)_70%)]" />
       <div className="absolute -translate-1/2 size-[7vmin] min-h-12 min-w-12 rounded-full bg-[#fffdf5] shadow-[0_0_60px_20px_rgba(255,244,210,0.9)]" />
       {/* lens flare ghosts along the diagonal */}

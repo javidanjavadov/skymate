@@ -22,10 +22,45 @@ export interface Dashboard {
   sun: { sunrise?: string | null; sunset?: string | null }
   precipitation: { today_mm: number; next_24h_mm: number }
   uv: { now: number | null; max_today: number | null; protect_until: string | null }
-  hourly: { time: string; temperature: number | null; condition: Condition; is_day: boolean; precipitation_rate: number | null }[]
-  daily: { date: string; min: number | null; max: number | null; condition: Condition; description: string; precipitation: number | null }[]
+  hourly: Hour[]
+  daily: Day[]
   alerts: { event: string; severity: "severe" | "moderate" | "minor"; start: string; end: string }[]
   meta: { source: string; data_age_hours: number | null }
+}
+
+export interface Hour {
+  time: string
+  temperature: number | null
+  feels_like: number | null
+  condition: Condition
+  description: string
+  is_day: boolean
+  precipitation_rate: number | null
+  humidity: number | null
+  dew_point: number | null
+  visibility: number | null
+  wind_speed: number | null
+  wind_gust: number | null
+  wind_direction: number | null
+  uv_index: number | null
+  cloud_cover: number | null
+}
+
+export interface Day {
+  date: string
+  min: number | null
+  max: number | null
+  condition: Condition
+  description: string
+  precipitation: number | null
+  uv_max?: number | null
+  wind_max?: number | null
+  gust_max?: number | null
+  feels_like_max?: number | null
+  humidity?: number | null
+  dew_point?: number | null
+  visibility_min?: number | null
+  wind_direction?: number | null
 }
 
 export type Units = "metric" | "imperial"
@@ -57,6 +92,14 @@ export async function fetchDashboard(query: { q?: string; lat?: number; lon?: nu
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new WeatherError(body.error ?? "Something went wrong. Try again in a moment.")
   return body as Dashboard
+}
+
+export interface Place { name: string; country: string; lat: number; lon: number }
+
+export async function searchPlaces(q: string, signal: AbortSignal): Promise<Place[]> {
+  const res = await fetch(`/site/api/places?${new URLSearchParams({ q })}`, { signal })
+  if (!res.ok) return []
+  return ((await res.json()) as { places: Place[] }).places
 }
 
 const locale = typeof navigator !== "undefined" ? navigator.languages?.[0] ?? navigator.language : "en"
@@ -118,7 +161,7 @@ export const CONDITION_TITLE: Record<Condition, string> = {
   Fog: "Foggy",
 }
 
-export function title(now: Dashboard["now"]) {
+export function title(now: { condition: Condition; is_day: boolean; description: string }) {
   if (now.condition === "Clear" && !now.is_day) return "Clear Night"
   if (now.condition === "Clouds") {
     const d = now.description.toLowerCase()
@@ -129,31 +172,35 @@ export function title(now: Dashboard["now"]) {
 }
 
 export function summary(d: Dashboard, u: Units) {
-  const today = d.daily[0]
-  if (!today) return ""
+  return d.daily[0] ? daySummary(d.daily[0], "Today", u, d.uv.max_today) : ""
+}
+
+/** One-line outlook for a day; `when` is "Today", "Tomorrow" or a weekday name. */
+export function daySummary(today: Day, when: string, u: Units, uvMax: number | null = today.uv_max ?? null) {
   const max = fmt.temp(today.max, u)
   const rain = today.precipitation ?? 0
+  const On = when === "Today" || when === "Tomorrow" ? when : `On ${when}`
   switch (today.condition) {
     case "Thunderstorm":
-      return `Today, expect thunderstorms with temperatures reaching a maximum of ${max}. Stay indoors during lightning and avoid open areas.`
+      return `${On}, expect thunderstorms with temperatures reaching a maximum of ${max}. Stay indoors during lightning and avoid open areas.`
     case "Rain":
-      return `Today, expect a rainy day with temperatures reaching a maximum of ${max}. Grab your umbrella and raincoat before heading out.`
+      return `${On}, expect a rainy day with temperatures reaching a maximum of ${max}. Grab your umbrella and raincoat before heading out.`
     case "Drizzle":
-      return `Today, expect light drizzle and a maximum of ${max}. A light jacket and an umbrella will keep you comfortable.`
+      return `${On}, expect light drizzle and a maximum of ${max}. A light jacket and an umbrella will keep you comfortable.`
     case "Snow":
-      return `Today, expect snow with a maximum of ${max}. Allow extra time for travel and dress in warm layers.`
+      return `${On}, expect snow with a maximum of ${max}. Allow extra time for travel and dress in warm layers.`
     case "Fog":
     case "Mist":
-      return `Today, expect reduced visibility and a maximum of ${max}. Take extra care on the roads.`
+      return `${On}, expect reduced visibility and a maximum of ${max}. Take extra care on the roads.`
     case "Clear":
-      return `Today, expect clear skies with temperatures reaching a maximum of ${max}.${(d.uv.max_today ?? 0) >= 6 ? " UV is high, so use sun protection." : " A great day to be outside."}`
+      return `${On}, expect clear skies with temperatures reaching a maximum of ${max}.${(uvMax ?? 0) >= 6 ? " UV is high, so use sun protection." : " A great day to be outside."}`
     default:
-      return `Today, expect ${today.description || "clouds"} with a maximum of ${max}.${rain >= 1 ? " Keep an umbrella handy." : ""}`
+      return `${On}, expect ${today.description || "clouds"} with a maximum of ${max}.${rain >= 1 ? " Keep an umbrella handy." : ""}`
   }
 }
 
-export function feelsNote(d: Dashboard) {
-  const { temperature: t, feels_like: f, humidity: h, wind_speed: w } = d.now
+export function feelsNote(v: { temperature: number | null; feels_like: number | null; humidity: number | null; wind_speed: number | null }) {
+  const { temperature: t, feels_like: f, humidity: h, wind_speed: w } = v
   if (t == null || f == null) return ""
   if (f - t >= 1.5) return (h ?? 0) >= 60 ? "Humidity is making it feel warmer." : "Sunshine is making it feel warmer."
   if (t - f >= 1.5) return (w ?? 0) >= 4 ? "Wind is making it feel colder." : "It feels slightly colder than it is."
@@ -173,4 +220,12 @@ export function uvCategory(raw: number | null) {
 export function compass(deg: number | null) {
   if (deg == null) return ""
   return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(deg / 45) % 8]
+}
+
+const regionNames = (() => {
+  try { return new Intl.DisplayNames([locale], { type: "region" }) } catch { return null }
+})()
+
+export function countryName(code: string) {
+  try { return (code && regionNames?.of(code.toUpperCase())) || code } catch { return code }
 }

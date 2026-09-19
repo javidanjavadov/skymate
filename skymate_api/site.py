@@ -2,7 +2,9 @@
 
 The front end lives in /frontend (React + shadcn/ui + Magic UI) and is built into static/web.
 """
+import math
 import os
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -11,11 +13,12 @@ from fastapi import APIRouter, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from . import forecast, security
+from . import forecast, geo, security
 
 WEB = Path(__file__).parent / "static" / "web"
 router = APIRouter(include_in_schema=False)
 demo_limiter = security.SlidingWindow(30, 60)
+places_limiter = security.SlidingWindow(90, 60)  # typing-as-you-search sends more, smaller requests
 
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "skymatee_bot")
 APP_PAGES = ("/", "/terms", "/privacy")
@@ -47,10 +50,43 @@ def _local_hour(iso: str, tz) -> datetime:
     return datetime.fromisoformat(iso).astimezone(tz)
 
 
+HOUR_FIELDS = ("temperature", "feels_like", "condition", "description", "is_day", "precipitation_rate", "humidity",
+               "dew_point", "visibility", "wind_speed", "wind_gust", "wind_direction", "uv_index", "cloud_cover")
+
+
+def _mean(values):
+    values = [v for v in values if v is not None]
+    return round(sum(values) / len(values), 1) if values else None
+
+
+def _mean_direction(degrees):
+    degrees = [d for d in degrees if d is not None]
+    if not degrees:
+        return None
+    x = sum(math.cos(math.radians(d)) for d in degrees)
+    y = sum(math.sin(math.radians(d)) for d in degrees)
+    return round(math.degrees(math.atan2(y, x)) % 360)
+
+
+def _day_details(hourly: list[dict], tz) -> dict:
+    """Per local day: values the 10-day cards need that the daily summary doesn't carry."""
+    days = defaultdict(list)
+    for h in hourly:
+        days[_local_hour(h["time"], tz).date().isoformat()].append(h)
+    out = {}
+    for day, hs in days.items():
+        feels = [h["feels_like"] for h in hs if h.get("feels_like") is not None]
+        vis = [h["visibility"] for h in hs if h.get("visibility") is not None]
+        out[day] = {"feels_like_max": max(feels) if feels else None, "humidity": _mean(h.get("humidity") for h in hs),
+                    "dew_point": _mean(h.get("dew_point") for h in hs), "visibility_min": min(vis) if vis else None,
+                    "wind_direction": _mean_direction(h.get("wind_direction") for h in hs)}
+    return out
+
+
 def _dashboard(q: str | None, lat: float | None, lon: float | None) -> dict:
     loc = forecast.resolve_location(q, lat, lon)
     cur = forecast.current(loc)
-    hourly = forecast.hourly(loc, 48)["hourly"]
+    hourly = forecast.hourly(loc, 240)["hourly"]
     daily = forecast.daily(loc, 10)["daily"]
     try:
         alerts = forecast.alerts(loc, 72)["alerts"]
@@ -85,11 +121,13 @@ def _dashboard(q: str | None, lat: float | None, lon: float | None) -> dict:
 
     # A real measurement beats the model: keep "now", the first hourly slot and today's range consistent with it.
     shown_now = measured("temperature")
-    hourly_out = [{"time": h["time"], "temperature": h["temperature"], "condition": h["condition"],
-                   "is_day": h["is_day"], "precipitation_rate": h.get("precipitation_rate")}
+    hourly_out = [{"time": h["time"], **{f: h.get(f) for f in HOUR_FIELDS}}
                   for h in hourly if datetime.fromisoformat(h["time"]) >= now - timedelta(hours=2)][:12]
+    details = _day_details(hourly, tz)
     daily_out = [{"date": d["date"], "min": d["temp_min"], "max": d["temp_max"], "condition": d["condition"],
-                  "description": d["description"], "precipitation": d["precipitation_sum"]} for d in daily]
+                  "description": d["description"], "precipitation": d["precipitation_sum"], "uv_max": d.get("uv_max"),
+                  "wind_max": d.get("wind_max"), "gust_max": d.get("gust_max"), "sunrise": d.get("sunrise"),
+                  "sunset": d.get("sunset"), **details.get(d["date"], {})} for d in daily]
     if shown_now is not None:
         if hourly_out:
             hourly_out[0]["temperature"] = shown_now
@@ -146,3 +184,11 @@ async def site_weather(request: Request, q: str | None = Query(None, min_length=
                             status_code=404)
     except forecast.NoData:
         return JSONResponse({"error": "Weather data is updating. Try again in a few minutes."}, status_code=503)
+
+
+@router.get("/site/api/places")
+async def site_places(request: Request, q: str = Query(..., min_length=1, max_length=100)):
+    if not places_limiter.allow(security.client_ip(request)):
+        return JSONResponse({"error": "Too many searches. Wait a minute, then try again."}, status_code=429)
+    places = await run_in_threadpool(geo.suggest, q, 6)
+    return {"places": [{"name": p["name"], "country": p["country"], "lat": p["lat"], "lon": p["lon"]} for p in places]}
