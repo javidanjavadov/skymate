@@ -89,6 +89,8 @@ On Postgres, the service runs `scripts/db_smoke_test.py` at startup and logs `AL
 - **Telegram**: webhook protected by a secret header; payments are accepted only for the expected payload,
   currency and amount; per-user flood limits; user text is escaped before formatting.
 - **Secrets** stay in `.env` or the host's environment and never in the repository.
+- **Client IPs**: forwarded headers are trusted only from Render's internal proxy network (`10.0.0.0/8`), so
+  visitors can't fake their address to dodge per-IP limits or the admin lockout.
 
 Report security issues privately to the owner rather than in public issues.
 
