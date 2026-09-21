@@ -9,17 +9,25 @@ from pathlib import Path
 
 import requests
 from fastapi import APIRouter, Depends, Header, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException
 
-from . import auth, db, forecast, security, store
+from . import admin_2fa, auth, db, forecast, security, store
 
 PAGE = Path(__file__).parent / "static" / "admin.html"
 PREFIX = security.ADMIN_PREFIX
 
 
-def require_admin(request: Request, x_admin_token: str | None = Header(None)):
+def require_token(request: Request, x_admin_token: str | None = Header(None)):
     if not security.check_admin_token(security.client_ip(request), x_admin_token):
+        raise HTTPException(status_code=404)
+
+
+def require_admin(request: Request, x_admin_token: str | None = Header(None),
+                  x_admin_session: str | None = Header(None)):
+    """Token plus a session from the Telegram code step. Anything missing answers 404."""
+    require_token(request, x_admin_token)
+    if not admin_2fa.check(x_admin_session):
         raise HTTPException(status_code=404)
 
 
@@ -29,6 +37,33 @@ def _audit(request: Request, action: str, detail: str = ""):
 
 router = APIRouter()
 api = APIRouter(dependencies=[Depends(require_admin)])
+signin = APIRouter(dependencies=[Depends(require_token)])
+
+
+@signin.post("/start")
+def signin_start(request: Request):
+    """Token checked: send the one-time code (or, with 2FA off, hand out a session directly)."""
+    ip = security.client_ip(request)
+    if not admin_2fa.ENABLED:
+        return {"twofa": False}
+    ok, message = admin_2fa.start(ip)
+    if not ok:
+        return JSONResponse({"error": {"code": "code_not_sent", "message": message}}, status_code=503)
+    return {"twofa": True, "message": message}
+
+
+@signin.post("/verify")
+def signin_verify(request: Request, code: str = Query(..., min_length=6, max_length=6, pattern=r"^\d{6}$")):
+    session = admin_2fa.verify(security.client_ip(request), code)
+    if not session:
+        raise HTTPException(status_code=404)
+    return {"session": session}
+
+
+@signin.post("/end")
+def signin_end(x_admin_session: str | None = Header(None)):
+    admin_2fa.end(x_admin_session)
+    return {"ok": True}
 
 
 def page(request: Request):
@@ -254,20 +289,47 @@ def key_active(key_id: int, active: bool, request: Request):
     return {"ok": True}
 
 
-# Used by the Telegram bot to manage desktop-app keys, which it names "tg:<user id>".
-@api.post("/keys/by-name/{name}/plan")
+# ─── Bot service route ───────────────────────────────────────────────────────
+# The Telegram bot manages desktop-app keys named "tg:<user id>". It has the admin token but can't answer a
+# Telegram code, so it gets its own token-only route, limited to those keys and the two app plans. A leaked token
+# alone therefore can't create API keys or change real customers.
+service = APIRouter(dependencies=[Depends(require_token)])
+SERVICE_PLANS = ("app_free", "premium")
+
+
+def _app_key_name(name: str) -> str:
+    name = name.strip()
+    if not (name.startswith("tg:") and name[3:].isdigit()):
+        raise auth.AuthError(400, "Only Telegram app keys (tg:<user id>) can be managed here.")
+    return name
+
+
+def _app_plan(plan: str) -> str:
+    if plan not in SERVICE_PLANS:
+        raise auth.AuthError(400, "Only app plans can be set here.")
+    return plan
+
+
+@service.post("/keys")
+def service_create_key(request: Request, name: str = Query(..., min_length=4, max_length=40), plan: str = "app_free"):
+    name, plan = _app_key_name(name), _app_plan(plan)
+    key = auth.create_key(name, plan)
+    _audit(request, "app_key_created", f"name={name} plan={plan}")
+    return {"api_key": key}
+
+
+@service.post("/keys/by-name/{name}/plan")
 def plan_by_name(name: str, plan: str):
+    name, plan = _app_key_name(name), _app_plan(plan)
     ids = [k["id"] for k in auth.list_keys() if k["name"] == name and k["active"]]
-    try:
-        for key_id in ids:
-            auth.set_plan(key_id, plan)
-    except ValueError as e:
-        raise auth.AuthError(400, str(e))
+    for key_id in ids:
+        auth.set_plan(key_id, plan)
     return {"updated": ids, "plan": plan}
 
 
-@api.post("/keys/by-name/{name}/revoke")
+@service.post("/keys/by-name/{name}/revoke")
 def revoke_by_name(name: str):
+    name = _app_key_name(name)
     ids = [k["id"] for k in auth.list_keys() if k["name"] == name and k["active"]]
     for key_id in ids:
         auth.set_active(key_id, False)
@@ -290,4 +352,6 @@ def data():
 if PREFIX:
     router.add_api_route(PREFIX, page_redirect, methods=["GET"], include_in_schema=False)
     router.add_api_route(PREFIX + "/", page, methods=["GET"], include_in_schema=False)
+    router.include_router(signin, prefix=PREFIX + "/signin", include_in_schema=False)
     router.include_router(api, prefix=PREFIX + "/api", include_in_schema=False)
+    router.include_router(service, prefix=PREFIX + "/service", include_in_schema=False)

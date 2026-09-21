@@ -65,10 +65,15 @@ button.b.danger { color: var(--bad); }
 <div id="login">
   <div class="card">
     <h1 style="margin:0 0 4px;font-size:18px">SkyMate Admin</h1>
-    <div class="muted">Enter your admin token.</div>
-    <form onsubmit="event.preventDefault(); login();">
+    <div class="muted" id="lhint">Enter your admin token.</div>
+    <form id="step1" onsubmit="event.preventDefault(); login();">
       <input id="tok" type="password" placeholder="Admin token" autocomplete="current-password">
+      <button class="b primary" type="submit">Continue</button>
+    </form>
+    <form id="step2" class="hidden" onsubmit="event.preventDefault(); verifyCode();">
+      <input id="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code">
       <button class="b primary" type="submit">Sign in</button>
+      <button class="b" type="button" onclick="login()">Send a new code</button>
     </form>
     <div id="lerr" style="color:var(--bad);margin-top:8px"></div>
   </div>
@@ -116,8 +121,11 @@ button.b.danger { color: var(--bad); }
 <div id="toast"></div>
 
 <script>
-const API = location.pathname.replace(/\/+$/, "") + "/api";
+const BASE = location.pathname.replace(/\/+$/, "");
+const API = BASE + "/api";
 let TOKEN = sessionStorage.getItem("sm_admin") || "";
+let SESSION = sessionStorage.getItem("sm_admin_session") || "";
+const authHeaders = () => ({ "X-Admin-Token": TOKEN, "X-Admin-Session": SESSION });
 let PLANS = {};
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -129,19 +137,45 @@ let dt; function debounce(fn) { clearTimeout(dt); dt = setTimeout(fn, 250); }
 function toast(t) { const e = $("toast"); e.textContent = t; e.style.display = "block"; setTimeout(() => e.style.display = "none", 2500); }
 
 async function call(path, method = "GET") {
-  const r = await fetch(API + path, { method, headers: { "X-Admin-Token": TOKEN }, cache: "no-store" });
+  const r = await fetch(API + path, { method, headers: authHeaders(), cache: "no-store" });
   const body = await r.json().catch(() => ({}));
   if (r.status === 401 || r.status === 404) { logout(); throw new Error("Session expired"); }
   if (!r.ok) throw new Error(body.error?.message || r.statusText);
   return body;
 }
 
+// Sign-in: admin token, then the one-time code the bot sends to the owner's Telegram.
+const signin = (path) => fetch(BASE + "/signin" + path, { method: "POST", headers: authHeaders(), cache: "no-store" });
 async function login() {
-  TOKEN = $("tok").value.trim();
-  try { await call("/overview"); sessionStorage.setItem("sm_admin", TOKEN); start(); }
-  catch (e) { $("lerr").textContent = "Wrong token."; TOKEN = ""; }
+  TOKEN = TOKEN || $("tok").value.trim();
+  $("lerr").textContent = "";
+  const r = await signin("/start").catch(() => null);
+  const body = r ? await r.json().catch(() => ({})) : {};
+  if (!r || r.status === 404) { $("lerr").textContent = "Wrong token."; TOKEN = ""; return; }
+  if (!r.ok) { $("lerr").textContent = body.error?.message || "Sign-in is unavailable. Try again later."; TOKEN = ""; return; }
+  if (!body.twofa) { SESSION = ""; return finish(); }
+  $("lhint").textContent = body.message;
+  $("step1").classList.add("hidden"); $("step2").classList.remove("hidden"); $("code").focus();
 }
-function logout() { sessionStorage.removeItem("sm_admin"); TOKEN = ""; $("app").classList.add("hidden"); $("login").classList.remove("hidden"); }
+async function verifyCode() {
+  const code = $("code").value.trim();
+  const r = await signin("/verify?code=" + encodeURIComponent(code)).catch(() => null);
+  if (!r || !r.ok) { $("lerr").textContent = "Wrong or expired code."; $("code").value = ""; return; }
+  SESSION = (await r.json()).session;
+  finish();
+}
+function finish() {
+  sessionStorage.setItem("sm_admin", TOKEN); sessionStorage.setItem("sm_admin_session", SESSION);
+  $("step2").classList.add("hidden"); $("step1").classList.remove("hidden"); $("code").value = ""; $("tok").value = "";
+  $("lhint").textContent = "Enter your admin token.";
+  start();
+}
+function logout() {
+  if (SESSION) signin("/end").catch(() => {});
+  sessionStorage.removeItem("sm_admin"); sessionStorage.removeItem("sm_admin_session"); TOKEN = ""; SESSION = "";
+  $("app").classList.add("hidden"); $("login").classList.remove("hidden");
+  $("step2").classList.add("hidden"); $("step1").classList.remove("hidden"); $("lhint").textContent = "Enter your admin token.";
+}
 
 $("nav").onclick = (e) => { const v = e.target.dataset.v; if (!v) return; show(v); };
 function show(v) {
@@ -300,7 +334,7 @@ function resetIdle() { clearTimeout(idle); idle = setTimeout(() => { if (TOKEN) 
 ["click", "keydown", "mousemove"].forEach((ev) => document.addEventListener(ev, resetIdle, { passive: true }));
 
 function start() { resetIdle(); $("login").classList.add("hidden"); $("app").classList.remove("hidden"); show("overview"); }
-if (TOKEN) call("/overview").then(start).catch(() => {});
+if (TOKEN && SESSION) call("/overview").then(start).catch(() => {}); else { TOKEN = ""; SESSION = ""; }
 </script>
 </body>
 </html>

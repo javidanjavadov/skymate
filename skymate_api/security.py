@@ -114,11 +114,16 @@ def check_admin_token(ip: str, token: str | None) -> bool:
         return False
     if token and secrets.compare_digest(token, ADMIN_TOKEN):
         return True
+    record_admin_failure(ip, "admin_auth_failed")
+    return False
+
+
+def record_admin_failure(ip: str, action: str):
+    """Counts toward the lockout (wrong token or wrong Telegram code) and writes the audit log."""
     with _admin_lock:
         _admin_failures[ip].append(time.monotonic())
-    log.warning("Rejected admin request from %s", ip)
-    audit(ip, "admin_auth_failed", "")
-    return False
+    log.warning("Rejected admin sign-in (%s) from %s", action, ip)
+    audit(ip, action, "")
 
 
 # ─── Audit log ───────────────────────────────────────────────────────────────

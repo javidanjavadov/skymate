@@ -104,7 +104,7 @@ class SkyMateAdmin(SkyMate):
         super().__init__(base_url, "", timeout)
         token = admin_token or os.environ.get("SKYMATE_ADMIN_TOKEN", "")
         self.admin = {"X-Admin-Token": token}
-        self.prefix = admin_prefix(token) + "/api"
+        self.prefix = admin_prefix(token) + "/service"  # token-only route for app keys (no Telegram code)
 
     def create_key(self, name: str, plan: str) -> str:
         return self._request("POST", f"{self.prefix}/keys", headers=self.admin, name=name, plan=plan)["api_key"]

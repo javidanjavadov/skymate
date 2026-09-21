@@ -77,6 +77,11 @@ On Postgres, the service runs `scripts/db_smoke_test.py` at startup and logs `AL
 - **Owner console** is served only under a secret path derived from the admin token and also requires the token
   on every request. Any failed check answers `404`. Five failures lock the address out for 15 minutes.
   The owner receives the link by sending `/admin` to the bot. All console actions are written to an audit log.
+- **Two-step sign-in**: after the token, the bot sends a one-time 6-digit code to the owner's Telegram
+  (`BOT_ADMIN_ID`). Codes expire after 5 minutes and work once; wrong codes count toward the lockout. The console
+  runs on a session that ends after 30 minutes idle or 12 hours. The bot manages desktop-app keys through a
+  separate token-only route limited to `tg:<id>` keys and app plans. `SKYMATE_ADMIN_2FA=0` turns the code step off
+  (local development only).
 - **API keys** are accepted only in the `X-API-Key` header, stored as SHA-256 hashes, and rate-limited per
   plan. Repeated invalid keys from one address are throttled.
 - **HTTP**: HSTS, CSP, `X-Frame-Options: DENY`, `nosniff`, no-referrer, no server banner, request IDs on every
