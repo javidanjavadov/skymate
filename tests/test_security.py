@@ -8,7 +8,7 @@ PREFIX = security.admin_prefix(ADMIN)
 
 
 def test_admin_is_not_at_obvious_paths(client):
-    for path in ("/admin", "/admin/", "/admin/keys", "/admin/api/overview", "/console"):
+    for path in ("/admin", "/admin/", "/admin/keys", "/admin/api/overview", "/console", "/owner", "/login"):
         r = client.get(path, headers={"X-Admin-Token": ADMIN})
         assert r.status_code == 404, path
         assert r.json()["error"]["code"] == "not_found"
