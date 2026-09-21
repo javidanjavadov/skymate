@@ -5,6 +5,7 @@ import { Cta, DesktopApp, Developers, Faq, Features, Measured, Pricing, Stats } 
 import { Footer } from "@/components/site/footer"
 import { Header } from "@/components/site/header"
 import { Privacy, Terms } from "@/components/site/legal"
+import { OwnerLogin } from "@/components/site/owner-login"
 import { DashboardSkeleton, SearchBar, WeatherDashboard } from "@/components/weather/dashboard"
 import { ForegroundRain, Sky, type SkyScene } from "@/components/weather/sky"
 import { fetchDashboard, WeatherError, type Dashboard, type Units } from "@/lib/weather"
@@ -193,6 +194,7 @@ export default function App() {
   let page
   if (path === "/terms") page = <Terms />
   else if (path === "/privacy") page = <Privacy />
+  else if (path === "/owner") page = <OwnerLogin />
   else page = <Home units={units} paused={paused} setCondition={setSky} setSkyActive={setSkyActive} bot={info.bot} stars={info.stars} />
 
   return (

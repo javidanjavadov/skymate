@@ -4,7 +4,7 @@ export function Footer({ bot }: { bot: string }) {
   const cols = [
     { title: "Product", links: [[`https://t.me/${bot}`, "Telegram Bot"], ["/#app", "Desktop App"], ["/#pricing", "Pricing"]] },
     { title: "Developers", links: [["/docs", "API Documentation"], ["/redoc", "API Reference"], ["/v1/status", "Service Status"]] },
-    { title: "Legal", links: [["/terms", "Terms of Service"], ["/privacy", "Privacy Policy"]] },
+    { title: "Legal", links: [["/terms", "Terms of Service"], ["/privacy", "Privacy Policy"], ["/owner", "Owner Sign-In"]] },
   ]
   return (
     <footer className="border-t border-white/10 bg-slate-950/90 pb-[env(safe-area-inset-bottom)]">

@@ -21,7 +21,7 @@ demo_limiter = security.SlidingWindow(30, 60)
 places_limiter = security.SlidingWindow(90, 60)  # typing-as-you-search sends more, smaller requests
 
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "skymatee_bot")
-APP_PAGES = ("/", "/terms", "/privacy")
+APP_PAGES = ("/", "/terms", "/privacy", "/owner")
 
 
 def _index() -> HTMLResponse:
@@ -38,7 +38,7 @@ for _path in APP_PAGES:
 
 @router.get("/robots.txt")
 def robots():
-    return PlainTextResponse("User-agent: *\nAllow: /\nDisallow: /console-\nDisallow: /v1/\nDisallow: /site/\n")
+    return PlainTextResponse("User-agent: *\nAllow: /\nDisallow: /console-\nDisallow: /owner\nDisallow: /v1/\nDisallow: /site/\n")
 
 
 @router.get("/site/api/info")
