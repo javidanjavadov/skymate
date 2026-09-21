@@ -16,12 +16,35 @@ TEST_UID = 999_000_000_001
 TEST_KEY = "smoke-test"
 
 
+def cleanup():
+    """Removes only the throwaway test user and key, including leftovers from an interrupted earlier run."""
+    with store.tx("bot") as c:
+        for t in ("user_settings", "user_favorites", "user_subscriptions", "premium", "payments", "app_keys",
+                  "alert_sent", "users"):
+            c.execute(f"DELETE FROM {t} WHERE user_id=?", (TEST_UID,))
+    with store.tx("api") as c:
+        c.execute("DELETE FROM usage WHERE key_id IN (SELECT id FROM api_keys WHERE name=?)", (TEST_KEY,))
+        c.execute("DELETE FROM api_keys WHERE name=?", (TEST_KEY,))
+
+
 def main():
     print("database:", "postgres" if store.IS_PG else "sqlite")
     db.init()
     store.init("bot")
     security.init_audit()
     import bot
+
+    bot.init_db()
+    cleanup()
+    try:
+        checks(bot)
+    finally:
+        cleanup()
+        print("cleanup ok")
+    print("ALL DATABASE CHECKS PASSED")
+
+
+def checks(bot):
 
     bot.init_db()
     bot.set_user_units(TEST_UID, "imperial")
@@ -65,15 +88,6 @@ def main():
     admin_panel.payments(limit=10)
     admin_panel.keys()
     print("admin panel queries ok")
-
-    with store.tx("bot") as c:
-        for t in ("user_settings", "user_favorites", "user_subscriptions", "premium", "payments", "app_keys",
-                  "alert_sent", "users"):
-            c.execute(f"DELETE FROM {t} WHERE user_id=?", (TEST_UID,))
-    with store.tx("api") as c:
-        c.execute("DELETE FROM usage WHERE key_id IN (SELECT id FROM api_keys WHERE name=?)", (TEST_KEY,))
-        c.execute("DELETE FROM api_keys WHERE name=?", (TEST_KEY,))
-    print("cleanup ok\nALL DATABASE CHECKS PASSED")
 
 
 if __name__ == "__main__":
