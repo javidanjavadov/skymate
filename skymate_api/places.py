@@ -36,8 +36,11 @@ def init():
         c.execute(SCHEMA)
 
 
+FORMAT = "v2"  # bumped when the name format changes, so old cached answers are ignored
+
+
 def _cell(lat: float, lon: float) -> str:
-    return f"{lat:.4f},{lon:.4f}"
+    return f"{FORMAT}|{lat:.4f},{lon:.4f}"
 
 
 def _neighbourhood(address: dict, city: str) -> str:
@@ -58,7 +61,7 @@ def _fetch(lat: float, lon: float) -> dict | None:
             time.sleep(wait)
         _last_request = time.monotonic()
         r = requests.get(URL, timeout=4, headers={"User-Agent": USER_AGENT}, params={
-            "format": "jsonv2", "lat": f"{lat:.4f}", "lon": f"{lon:.4f}", "zoom": 17, "addressdetails": 1,
+            "format": "jsonv2", "lat": f"{lat:.4f}", "lon": f"{lon:.4f}", "zoom": 18, "addressdetails": 1,
             "accept-language": "en"})
         r.raise_for_status()
         return r.json().get("address") or {}
@@ -88,7 +91,8 @@ def lookup(lat: float, lon: float, city: str) -> dict | None:
         return None  # temporary failure: not cached, try again next time
     # The street plus the city is exact; district names in OpenStreetMap often disagree with local usage, so they
     # are used only when no street is known.
-    precise = address.get("road") or _neighbourhood(address, city)
+    street = " ".join(v for v in (address.get("road"), address.get("house_number")) if v)
+    precise = street or _neighbourhood(address, city)
     name = f"{precise}, {city}" if precise and city else ""
     detail = ""  # the street is already part of the name; a postcode adds nothing for weather
     country = (address.get("country_code") or "").upper()

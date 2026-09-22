@@ -27,13 +27,13 @@ def test_lookup_is_cached_and_identifies_skymate(monkeypatch):
 
     def fake_get(url, **kw):
         calls.append(kw)
-        return FakeResponse({"road": "Vung Tau Street", "village": "Ahmedli", "postcode": "1126", "country_code": "az"})
+        return FakeResponse({"road": "Vung Tau Street", "house_number": "2", "village": "Ahmedli", "country_code": "az"})
 
     monkeypatch.setattr(places.requests, "get", fake_get)
     monkeypatch.setattr(places, "_last_request", 0.0)
     first = places.lookup(40.375612, 49.956821, "Baku")
     second = places.lookup(40.375588, 49.956799, "Baku")  # same ~10 m square
-    assert first == second == {"name": "Vung Tau Street, Baku", "country": "AZ", "detail": ""}
+    assert first == second == {"name": "Vung Tau Street 2, Baku", "country": "AZ", "detail": ""}
     assert len(calls) == 1
     assert calls[0]["headers"]["User-Agent"].startswith("SkyMate/")
     assert calls[0]["params"]["lat"] == "40.3756"  # only the rounded position leaves SkyMate

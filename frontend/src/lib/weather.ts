@@ -106,7 +106,7 @@ export async function searchPlaces(q: string, signal: AbortSignal): Promise<Plac
 
 /** OpenStreetMap's reverse lookup, called from the visitor's own browser (© OpenStreetMap contributors). */
 const OSM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
-const PLACE_CACHE = "skymate-places-v3"  // bumped when the name format changes, so old answers are dropped
+const PLACE_CACHE = "skymate-places-v4"  // bumped when the name format changes, so old answers are dropped
 // Only the neighbourhood comes from OpenStreetMap; the city name stays SkyMate's own, because OSM's city field
 // varies by country ("Sabail Raion" for Baku, "Greater London" for London).
 const PARTS = ["suburb", "quarter", "neighbourhood", "village", "hamlet", "city_district"] as const
@@ -121,7 +121,7 @@ function cachedPlaces(): Record<string, { name: string; country: string; detail:
 }
 
 /**
- * The exact place around a point, e.g. "Muhammad Hadi Street, Baku". Used only for the visitor's own position.
+ * The exact place around a point, e.g. "Muhammad Hadi Street 78, Baku". Used only for the visitor's own position.
  * Answers are cached per ~100 m square in the browser, as the Nominatim usage policy requires.
  */
 export async function exactPlace(lat: number, lon: number, city: string, signal?: AbortSignal) {
@@ -137,14 +137,15 @@ export async function exactPlace(lat: number, lon: number, city: string, signal?
     return res.ok ? ((await res.json()).address as Record<string, string> | undefined) : undefined
   }
   try {
-    let address = await ask(17)
-    // A spot away from any mapped road (inside a block or a park) gets one closer look
-    if (address && !address.road) address = (await ask(18)) ?? address
+    // Building level first, for the house number; a wider look only if no street was found there
+    let address = await ask(18)
+    if (!address?.road) address = (await ask(17)) ?? address
     if (!address) return null
     // The street plus the city is exact: "Muhammad Hadi Street, Baku". District names in OpenStreetMap often
     // disagree with local usage (the area around Həzi Aslanov metro is mapped as Ahmedli), so they are used
     // only when no street is known.
-    const name = [address.road || neighbourhood(address, city), city].filter(Boolean).join(", ")
+    const street = address.road ? [address.road, address.house_number].filter(Boolean).join(" ") : ""
+    const name = [street || neighbourhood(address, city), city].filter(Boolean).join(", ")
     if (name === city) return null  // nothing more exact than what SkyMate already knows
     const place = { name, detail: "", country: (address.country_code ?? "").toUpperCase() }
     try {
