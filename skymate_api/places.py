@@ -61,8 +61,9 @@ def _fetch(lat: float, lon: float) -> dict | None:
             "accept-language": "en"})
         r.raise_for_status()
         return r.json().get("address") or {}
-    except (requests.RequestException, ValueError):
-        log.warning("Place-name lookup failed; using the city name")
+    except (requests.RequestException, ValueError) as e:
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        log.warning("Place-name lookup failed (%s%s); using the city name", type(e).__name__, f" HTTP {status}" if status else "")
         return None
     finally:
         _rate_lock.release()

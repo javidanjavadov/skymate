@@ -392,7 +392,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
               <span className="truncate" translate="no">{data.location.name}{data.location.country ? `, ${data.location.country}` : ""}</span>
               {data.location.name_source === "osm" && (
                 <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer"
-                  className="shrink-0 text-[11px] text-white/45 underline-offset-2 hover:text-white/70 hover:underline">© OpenStreetMap</a>
+                  className="shrink-0 text-[11px] text-white/45 underline-offset-2 hover:text-white/70 hover:underline">© OpenStreetMap contributors</a>
               )}
             </p>
             {sel.kind !== "now" ? (
