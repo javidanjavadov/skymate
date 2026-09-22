@@ -107,11 +107,25 @@ def reverse(lat: float, lon: float) -> dict | None:
             "SELECT * FROM cities WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
             (lat - box, lat + box, lon - box, lon + box)).fetchall()
         if rows:
-            best = min(rows, key=lambda r: _haversine(lat, lon, r["lat"], r["lon"]))
+            dist = {r["id"]: _haversine(lat, lon, r["lat"], r["lon"]) for r in rows}
+            best = min(rows, key=lambda r: dist[r["id"]])
+            # The nearest point is often a district of a big city (Qaraçuxur inside Baku). Prefer the city when it is
+            # in the same first-level region, much larger, and close enough that the visitor is plausibly inside it.
+            metros = [r for r in rows
+                      if r["country"] == best["country"] and r["admin1"] == best["admin1"]
+                      and r["population"] >= 5 * max(best["population"], 1)
+                      and dist[r["id"]] <= _urban_radius_km(r["population"])]
+            if metros:
+                best = max(metros, key=lambda r: r["population"])
             out = _row(best)
-            out["distance_km"] = round(_haversine(lat, lon, best["lat"], best["lon"]), 1)
+            out["distance_km"] = round(dist[best["id"]], 1)
             return out
     return None
+
+
+def _urban_radius_km(population: int) -> float:
+    """Rough radius of a city's built-up area: about 3 km per 100k people (square root), at most 25 km."""
+    return min(25.0, 3.0 * math.sqrt(max(population, 0) / 100_000))
 
 
 @lru_cache(maxsize=4096)
