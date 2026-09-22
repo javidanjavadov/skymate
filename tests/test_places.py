@@ -33,7 +33,7 @@ def test_lookup_is_cached_and_identifies_skymate(monkeypatch):
     monkeypatch.setattr(places, "_last_request", 0.0)
     first = places.lookup(40.375612, 49.956821, "Baku")
     second = places.lookup(40.375588, 49.956799, "Baku")  # same ~10 m square
-    assert first == second == {"name": "Vung Tau Street, Ahmedli, Baku", "country": "AZ", "detail": ""}
+    assert first == second == {"name": "Vung Tau Street, Baku", "country": "AZ", "detail": ""}
     assert len(calls) == 1
     assert calls[0]["headers"]["User-Agent"].startswith("SkyMate/")
     assert calls[0]["params"]["lat"] == "40.3756"  # only the rounded position leaves SkyMate
@@ -60,7 +60,7 @@ def test_only_the_visitors_own_position_is_looked_up(monkeypatch):
         pass
 
     monkeypatch.setattr(places, "lookup",
-                        lambda lat, lon, city: called.append((lat, lon, city)) or {"name": "Ahmedli, Baku", "country": "AZ"})
+                        lambda lat, lon, city: called.append((lat, lon, city)) or {"name": "Vung Tau Street, Baku", "country": "AZ"})
     monkeypatch.setattr(site.forecast, "resolve_location",
                         lambda q, lat, lon: {"name": "Baku", "country": "AZ", "lat": lat or 40.4, "lon": lon or 49.9})
     monkeypatch.setattr(site.forecast, "current", lambda loc: (_ for _ in ()).throw(Stop(loc["name"])))
@@ -74,5 +74,5 @@ def test_only_the_visitors_own_position_is_looked_up(monkeypatch):
     assert shown(None, 40.4, 49.9, False) == "Baku"      # a city picked from search
     assert shown("Baku", None, None, True) == "Baku"     # a typed city name
     assert called == []
-    assert shown(None, 40.3756, 49.9568, True) == "Ahmedli, Baku"
+    assert shown(None, 40.3756, 49.9568, True) == "Vung Tau Street, Baku"
     assert called == [(40.3756, 49.9568, "Baku")]

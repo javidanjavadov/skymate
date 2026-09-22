@@ -86,9 +86,10 @@ def lookup(lat: float, lon: float, city: str) -> dict | None:
     address = _fetch(lat, lon)
     if address is None:
         return None  # temporary failure: not cached, try again next time
-    small = _neighbourhood(address, city)
-    parts = [p for p in (address.get("road"), small, city) if p]
-    name = ", ".join(parts) if len(parts) > 1 else ""
+    # The street plus the city is exact; district names in OpenStreetMap often disagree with local usage, so they
+    # are used only when no street is known.
+    precise = address.get("road") or _neighbourhood(address, city)
+    name = f"{precise}, {city}" if precise and city else ""
     detail = ""  # the street is already part of the name; a postcode adds nothing for weather
     country = (address.get("country_code") or "").upper()
     try:
