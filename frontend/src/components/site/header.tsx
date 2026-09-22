@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 export const NAV = [
   { href: "/#features", label: "Features" },
   { href: "/#pricing", label: "Pricing" },
-  { href: "/#app", label: "Desktop App" },
+  { href: "/#telegram", label: "Telegram Bot" },
   { href: "/#developers", label: "Developers" },
   { href: "/#faq", label: "FAQ" },
 ]

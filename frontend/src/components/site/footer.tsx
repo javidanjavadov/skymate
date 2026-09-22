@@ -2,7 +2,7 @@ import { Logo } from "@/components/site/header"
 
 export function Footer({ bot }: { bot: string }) {
   const cols = [
-    { title: "Product", links: [[`https://t.me/${bot}`, "Telegram Bot"], ["/#app", "Desktop App"], ["/#pricing", "Pricing"]] },
+    { title: "Product", links: [[`https://t.me/${bot}`, "Telegram Bot"], ["/#pricing", "Pricing"]] },
     { title: "Developers", links: [["/docs", "API Documentation"], ["/redoc", "API Reference"], ["/v1/status", "Service Status"]] },
     { title: "Legal", links: [["/terms", "Terms of Service"], ["/privacy", "Privacy Policy"]] },
   ]

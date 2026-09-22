@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react"
 import {
-  AlertTriangle, ArrowRight, CalendarDays, Check, Code2, Download, Map, Minus, Radio, ShieldCheck, Sun, Terminal,
+  AlertTriangle, ArrowRight, CalendarDays, Check, Code2, Map, Minus, Radio, Send, ShieldCheck, Sun, Terminal,
 } from "lucide-react"
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
@@ -12,10 +12,6 @@ import { MagicCard } from "@/components/ui/magic-card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { fmt } from "@/lib/weather"
 import { cn } from "@/lib/utils"
-
-const DOWNLOAD = "https://github.com/javidanjavadov/skymate/releases/latest/download/SkyMate.exe"
-const CHECKSUM = "https://github.com/javidanjavadov/skymate/releases/latest/download/SkyMate.exe.sha256"
-const RELEASES = "https://github.com/javidanjavadov/skymate/releases/latest"
 
 function SectionHead({ kicker, title, children, id }: { kicker: string; title: string; children?: ReactNode; id: string }) {
   return (
@@ -30,16 +26,21 @@ function SectionHead({ kicker, title, children, id }: { kicker: string; title: s
 const glass = "rounded-3xl border border-white/10 bg-slate-950/30"
 
 export function Stats() {
-  const [s, setS] = useState<{ readings: number; stations: number; days: number } | null>(null)
+  // Last known numbers show instantly; fresh ones replace them when /v1/status answers
+  const [s, setS] = useState<{ readings: number; stations: number; days: number } | null>(() => {
+    try { return JSON.parse(localStorage.getItem("skymate-stats") ?? "null") } catch { return null }
+  })
   useEffect(() => {
     const ctrl = new AbortController()
     fetch("/v1/status", { signal: ctrl.signal }).then((r) => r.json()).then((d) => {
       const until = d.offline_ready_until ? new Date(d.offline_ready_until).getTime() : null
-      setS({
+      const next = {
         readings: d.observations?.readings ?? 0,
         stations: d.observations?.stations ?? 0,
         days: until ? Math.max(1, Math.round((until - Date.now()) / 86_400_000)) : 10,
-      })
+      }
+      setS(next)
+      try { localStorage.setItem("skymate-stats", JSON.stringify(next)) } catch { /* not remembered */ }
     }).catch(() => {})
     return () => ctrl.abort()
   }, [])
@@ -106,7 +107,7 @@ export function Measured() {
   const steps = [
     ["Collect", "Station measurements and global model forecasts arrive continuously from public sources."],
     ["Store", "SkyMate keeps its own copy: a permanent measurement archive and 10 days of forecasts."],
-    ["Deliver", "You get the nearest real reading plus a forecast for your exact location, in Telegram, on Windows or via API."],
+    ["Deliver", "You get the nearest real reading plus a forecast for your exact location, on this website, in Telegram or via API."],
   ]
   return (
     <section id="measured" aria-labelledby="measured-title" className={cn(glass, "grid scroll-mt-24 gap-10 p-6 sm:p-10 lg:grid-cols-2 lg:items-center")}>
@@ -206,7 +207,6 @@ export function Pricing({ bot, stars }: { bot: string; stars: number }) {
                 <Feature>10-day forecasts</Feature>
                 <Feature>Up to a year of measured history per chart</Feature>
                 <Feature>Unlimited favorite cities</Feature>
-                <Feature>Premium in the SkyMate desktop app</Feature>
               </ul>
               <Button asChild className="h-11 rounded-full bg-sky-400 text-slate-950 hover:bg-sky-300">
                 <a href={`https://t.me/${bot}?start=premium`} target="_blank" rel="noopener noreferrer">Get Premium</a>
@@ -244,46 +244,67 @@ export function Pricing({ bot, stars }: { bot: string; stars: number }) {
   )
 }
 
-export function DesktopApp({ bot }: { bot: string }) {
+export function TelegramBot({ bot }: { bot: string }) {
   const steps = [
-    ["Download SkyMate", "Get SkyMate.exe from the official GitHub release. No installer and no administrator rights needed."],
-    ["Get Your Personal Key", "Send /app to the SkyMate bot in Telegram."],
-    ["Paste Your Key", "Click ⚙ in the app and paste the key. Done."],
+    ["Open the Bot", `Start @${bot} in Telegram. No sign-up and no app to install.`],
+    ["Send a City or Your Location", "Type any city, or share your location from your phone, and get the weather in seconds."],
+    ["Get It Every Morning", "Turn on a daily forecast with /subscribe. Premium adds automatic severe-weather alerts."],
+  ]
+  const chat: [string, string][] = [
+    ["me", "Baku"],
+    ["bot", "📍 Baku, AZ · measured 20 min ago\n☀️ 24°, clear sky · feels like 23°\n💨 Wind 26 km/h N · 💧 65%"],
+    ["me", "/week"],
+    ["bot", "📅 Next days\nTue 27° / 24° ☀️\nWed 27° / 23° 🌤\nThu 24° / 23° ☁️"],
   ]
   return (
-    <section id="app" aria-labelledby="app-title" className={cn(glass, "grid scroll-mt-24 gap-10 p-6 sm:p-10 lg:grid-cols-2 lg:items-center")}>
+    <section id="telegram" aria-labelledby="telegram-title" className={cn(glass, "grid scroll-mt-24 gap-10 p-6 sm:p-10 lg:grid-cols-2 lg:items-center")}>
       <div className="min-w-0">
-        <p className="text-sm font-semibold uppercase tracking-[0.16em] text-sky-300">Desktop App</p>
-        <h2 id="app-title" className="mt-3 text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">SkyMate for Windows</h2>
+        <p className="text-sm font-semibold uppercase tracking-[0.16em] text-sky-300">Telegram Bot</p>
+        <h2 id="telegram-title" className="mt-3 text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+          SkyMate in Your Chats
+        </h2>
         <p className="mt-4 text-pretty text-lg text-white/65">
-          Current conditions, forecasts, hourly charts, air quality and maps on your desktop. Premium unlocks Premium in the app too.
+          Everything on this page, in Telegram: current conditions, hourly and 10-day forecasts, UV, air quality, radar
+          and warnings, on your phone and computer.
         </p>
+        <ol className="mt-7 space-y-3">
+          {steps.map(([t, d], i) => (
+            <li key={t} className="flex gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-sky-400 font-semibold text-slate-950 tabular-nums">{i + 1}</span>
+              <div><h3 className="font-semibold text-white">{t}</h3><p className="text-pretty text-[15px] text-white/65">{d}</p></div>
+            </li>
+          ))}
+        </ol>
         <div className="mt-7 flex flex-wrap gap-3">
           <Button asChild className="h-11 rounded-full bg-white px-6 text-slate-900 hover:bg-sky-100">
-            <a href={DOWNLOAD} rel="noopener"><Download aria-hidden="true" />Download for Windows</a>
+            <a href={`https://t.me/${bot}`} target="_blank" rel="noopener noreferrer"><Send aria-hidden="true" />Open in Telegram</a>
           </Button>
           <Button asChild variant="outline" className="h-11 rounded-full border-white/20 bg-transparent text-white hover:bg-white/10">
-            <a href={`https://t.me/${bot}?start=app`} target="_blank" rel="noopener noreferrer">Get Your Key in Telegram</a>
+            <a href={`https://t.me/${bot}?start=premium`} target="_blank" rel="noopener noreferrer">Get Premium</a>
           </Button>
         </div>
-        <p className="mt-4 text-sm text-white/55">
-          Version 1.0.0 · 35&nbsp;MB · Windows 10 & 11 ·{" "}
-          <a className="text-sky-300 underline-offset-4 hover:underline" href={CHECKSUM} rel="noopener">SHA-256 checksum</a> ·{" "}
-          <a className="text-sky-300 underline-offset-4 hover:underline" href={RELEASES} rel="noopener">Release notes</a>
-        </p>
-        <p className="mt-3 text-pretty text-sm text-white/55">
-          SkyMate is new and not yet code-signed, so Windows may show “Windows protected your PC”. Choose <strong className="text-white/80">More info → Run anyway</strong>.
-          Verify your download in PowerShell with <code className="rounded bg-white/10 px-1.5 py-0.5 text-white/80">Get-FileHash SkyMate.exe</code>.
-        </p>
       </div>
-      <ol className="space-y-4">
-        {steps.map(([t, d], i) => (
-          <li key={t} className="flex gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-sky-400 font-semibold text-slate-950 tabular-nums">{i + 1}</span>
-            <div><h3 className="font-semibold text-white">{t}</h3><p className="text-pretty text-[15px] text-white/65">{d}</p></div>
-          </li>
-        ))}
-      </ol>
+
+      {/* Example conversation */}
+      <figure aria-label="Example conversation with the SkyMate bot"
+        className="mx-auto w-full max-w-sm rounded-[2rem] border border-white/10 bg-slate-950/60 p-4 shadow-2xl">
+        <figcaption className="flex items-center gap-3 border-b border-white/10 pb-3">
+          <img src="/favicon.svg" alt="" width={36} height={36} className="size-9 rounded-full" />
+          <div className="min-w-0">
+            <p className="truncate font-medium text-white">SkyMate</p>
+            <p className="text-xs text-sky-300">bot</p>
+          </div>
+        </figcaption>
+        <div className="space-y-2 pt-4 text-[14px] leading-snug">
+          {chat.map(([who, text], i) => (
+            <p key={i}
+              className={cn("w-fit max-w-[85%] whitespace-pre-line rounded-2xl px-3.5 py-2",
+                who === "me" ? "ml-auto rounded-br-md bg-sky-500 text-white" : "rounded-bl-md bg-white/10 text-white/90")}>
+              {text}
+            </p>
+          ))}
+        </div>
+      </figure>
     </section>
   )
 }

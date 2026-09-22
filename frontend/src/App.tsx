@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useReducedMotion } from "motion/react"
 
-import { Cta, DesktopApp, Developers, Faq, Features, Measured, Pricing, Stats } from "@/components/site/sections"
+import { Cta, Developers, Faq, Features, Measured, Pricing, Stats, TelegramBot } from "@/components/site/sections"
 import { Footer } from "@/components/site/footer"
 import { Header } from "@/components/site/header"
 import { Privacy, Terms } from "@/components/site/legal"
@@ -41,13 +41,47 @@ function store(key: string, value: string) {
 /** `gps` marks the visitor's own position: it is never written to the address bar. */
 type Query = { q?: string; lat?: number; lon?: number; gps?: boolean }
 
-/** A place from a shared link, or null to ask the visitor for their location first. */
-function initialQuery(): Query | null {
+/** A place from a shared link, or null when the address has none. */
+function linkedQuery(): Query | null {
   const p = new URLSearchParams(location.search)
   const lat = Number(p.get("lat")), lon = Number(p.get("lon"))
   if (p.has("lat") && p.has("lon") && Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon }
   const q = (p.get("q") ?? "").slice(0, 100)
   return q ? { q } : null
+}
+
+const LAST_KEY = "skymate-last"   // last place shown, so a returning visitor sees it immediately
+const CACHE_KEY = "skymate-dash"  // last dashboard, shown instantly while fresh data loads
+const CACHE_MAX_AGE = 3 * 3600_000
+
+const queryKey = (q: Query) =>
+  q.lat !== undefined && q.lon !== undefined ? `${q.lat.toFixed(2)},${q.lon.toFixed(2)}` : (q.q ?? "").toLowerCase()
+
+/** Never waits for anything: a shared link, else the last place viewed, else the default city. */
+function initialQuery(): Query {
+  const linked = linkedQuery()
+  if (linked) return linked
+  try {
+    const last = JSON.parse(localStorage.getItem(LAST_KEY) ?? "null") as Query | null
+    if (last && (last.q || (Number.isFinite(last.lat) && Number.isFinite(last.lon)))) return last
+  } catch { /* storage unavailable */ }
+  return { q: DEFAULT_CITY }
+}
+
+function cachedDashboard(query: Query): Dashboard | null {
+  try {
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) ?? "null") as { key: string; at: number; data: Dashboard } | null
+    return c && c.key === queryKey(query) && Date.now() - c.at < CACHE_MAX_AGE ? c.data : null
+  } catch {
+    return null
+  }
+}
+
+function remember(query: Query, data: Dashboard) {
+  try {
+    localStorage.setItem(LAST_KEY, JSON.stringify(query))
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ key: queryKey(query), at: Date.now(), data }))
+  } catch { /* storage full or unavailable: the next visit just loads normally */ }
 }
 
 function syncUrl(query: Query) {
@@ -69,8 +103,8 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
   bot: string
   stars: number
 }) {
-  const [query, setQuery] = useState<Query | null>(initialQuery)
-  const [data, setData] = useState<Dashboard | null>(null)
+  const [query, setQuery] = useState<Query>(initialQuery)
+  const [data, setData] = useState<Dashboard | null>(() => cachedDashboard(query))
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(true)
   const errorRef = useRef<HTMLParagraphElement>(null)
@@ -84,39 +118,43 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
     return () => { io.disconnect(); setSkyActive(true) }
   }, [setSkyActive])
 
-  /** Asks for the visitor's position. On first entry a refusal (or no answer) falls back to the default city. */
+  /** Asks for the visitor's position. On entry this runs in the background: weather is already on screen,
+   * and the page switches to the visitor's own location only if they allow it. */
   const locate = useCallback((onEntry: boolean) => {
-    const fallback = () => setQuery((q) => q ?? { q: DEFAULT_CITY })
     if (!("geolocation" in navigator)) {
-      if (onEntry) fallback()
-      else setError("Your browser can’t share your location. Search for your city instead.")
+      if (!onEntry) setError("Your browser can’t share your location. Search for your city instead.")
       return
     }
-    // Someone who ignores the permission prompt still gets weather; accepting later switches to their location.
-    const timer = onEntry ? setTimeout(fallback, 8000) : undefined
     navigator.geolocation.getCurrentPosition(
-      (pos) => { clearTimeout(timer); setQuery({ lat: pos.coords.latitude, lon: pos.coords.longitude, gps: true }) },
-      () => {
-        clearTimeout(timer)
-        if (onEntry) fallback()
-        else setError("Location access was blocked. Allow it in your browser, or search for your city.")
+      (pos) => {
+        const next = { lat: pos.coords.latitude, lon: pos.coords.longitude, gps: true }
+        // Skip the reload when the visitor is already looking at (almost) the same spot
+        setQuery((q) => (onEntry && q.gps && queryKey(q) === queryKey(next) ? q : next))
       },
+      () => { if (!onEntry) setError("Location access was blocked. Allow it in your browser, or search for your city.") },
       { timeout: 10_000, maximumAge: 600_000 },
     )
   }, [])
 
   useEffect(() => {
-    if (!initialQuery()) locate(true)
+    if (!linkedQuery()) locate(true)
   }, [locate])
 
+  // Saved weather is on screen from the first frame: show its sky too, instead of the neutral loading sky
   useEffect(() => {
-    if (!query) return
+    if (data) setCondition({ condition: data.now.condition, isDay: data.now.is_day, cloudCover: data.now.cloud_cover })
+    // only once, for the cached dashboard; fresh data updates the sky in the fetch below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
     const ctrl = new AbortController()
     setBusy(true)
     setError(null)
     fetchDashboard(query, ctrl.signal)
       .then((d) => {
         setData(d)
+        remember(query, d)
         setCondition({ condition: d.now.condition, isDay: d.now.is_day, cloudCover: d.now.cloud_cover })
         syncUrl(query)
         document.title = `${d.location.name} Weather — SkyMate`
@@ -149,7 +187,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
           error ? (
             <div className="rounded-3xl border border-white/10 bg-slate-950/75 p-4">
               {search}
-              <button type="button" onClick={() => setQuery({ ...(query ?? { q: DEFAULT_CITY }) })}
+              <button type="button" onClick={() => setQuery({ ...query })}
                 className="mt-3 rounded-full bg-white px-5 py-2 text-sm font-medium text-slate-900 outline-none hover:bg-sky-100 focus-visible:ring-2 focus-visible:ring-sky-300">
                 Try Again
               </button>
@@ -162,7 +200,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
         <Features />
         <Measured />
         <Pricing bot={bot} stars={stars} />
-        <DesktopApp bot={bot} />
+        <TelegramBot bot={bot} />
         <Developers />
         <Faq />
         <Cta bot={bot} />

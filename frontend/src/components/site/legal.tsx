@@ -20,7 +20,7 @@ const BOT = <a href="https://t.me/skymatee_bot" target="_blank" rel="noopener no
 export function Terms() {
   return (
     <Page title="Terms of Service">
-      <p>These terms govern your use of SkyMate: the Telegram bot {BOT}, the SkyMate desktop application, the website and the
+      <p>These terms govern your use of SkyMate: the Telegram bot {BOT}, the website and the
         SkyMate Weather API (together, the “Service”). By using the Service you agree to these terms.</p>
       <h2 id="service">1. The Service</h2>
       <p>SkyMate provides weather information: measurements from third-party weather stations, forecasts derived from global
@@ -32,7 +32,7 @@ export function Terms() {
       <h2 id="accounts">3. Accounts and Keys</h2>
       <ul>
         <li>Your Telegram account identifies you in the bot. You are responsible for activity under it.</li>
-        <li>Desktop-app and API keys are personal to you or your organisation. Keep them secret. Keys that are shared, leaked or misused may be revoked.</li>
+        <li>API keys are personal to you or your organisation. Keep them secret. Keys that are shared, leaked or misused may be revoked.</li>
       </ul>
       <h2 id="premium">4. Premium Subscriptions</h2>
       <ul>
@@ -87,7 +87,7 @@ export function Privacy() {
         <li>locations you choose to share, used only to answer that request and not stored;</li>
         <li>Premium payment records received from Telegram: payment ID, amount in Stars and dates. Card or bank details are never visible to SkyMate.</li>
       </ul>
-      <p><strong className="text-white">Weather API and desktop app</strong></p>
+      <p><strong className="text-white">Weather API</strong></p>
       <ul>
         <li>A hashed form of your key, your plan, and request counts per day and endpoint;</li>
         <li>technical request logs (time, path, IP address), kept for security and troubleshooting.</li>
@@ -119,7 +119,7 @@ export function Privacy() {
       <h2 id="rights">5. Your Rights</h2>
       <ul>
         <li><strong className="text-white">Delete</strong>: send /deletemydata to the bot. This removes your settings, favorites, reports,
-          desktop-app key and profile. Payment records are kept where the law requires it.</li>
+          keys and profile. Payment records are kept where the law requires it.</li>
         <li><strong className="text-white">Access or correct</strong>: contact support through /paysupport in the bot.</li>
       </ul>
       <h2 id="security">6. Security</h2>
