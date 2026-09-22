@@ -39,7 +39,10 @@ def resolve_location(q: str | None = None, lat: float | None = None, lon: float 
             raise NotFound("Coordinates out of range")
         near = geo.reverse(lat, lon)
         loc = {"name": near["name"] if near and near["distance_km"] < 30 else f"{lat:.2f}, {lon:.2f}",
-               "country": near["country"] if near else "", "lat": lat, "lon": lon}
+               "country": near["country"] if near else "", "lat": lat, "lon": lon,
+               # A nearby town's zone from GeoNames beats the offline boundary lookup, which gets some
+               # countries wrong (it answers Asia/Dubai everywhere in Azerbaijan).
+               "timezone": near["timezone"] if near and near["distance_km"] < 100 else None}
     else:
         raise NotFound("Provide either q or lat and lon")
     loc["lon"] = ((loc["lon"] + 180) % 360) - 180

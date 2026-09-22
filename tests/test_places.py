@@ -12,10 +12,13 @@ class FakeResponse:
         return {"address": self._address}
 
 
-def test_label_prefers_neighbourhood_and_city():
-    assert places._label({"village": "Ahmedli", "city": "Baku"}) == "Ahmedli, Baku"
-    assert places._label({"suburb": "Camden Town", "city": "London"}) == "Camden Town, London"
-    assert places._label({"town": "Quba"}) == "Quba"
+def test_neighbourhood_ignores_unusable_names():
+    # The city name always comes from SkyMate's own data, so only the smaller part is taken from the map service
+    assert places._neighbourhood({"village": "Ahmedli", "city": "Sabail Raion"}, "Baku") == "Ahmedli"
+    assert places._neighbourhood({"suburb": "Chalk Farm", "city": "Greater London"}, "London") == "Chalk Farm"
+    assert places._neighbourhood({"neighbourhood": "Manhattan Community Board 5", "suburb": "Manhattan"}, "New York City") == "Manhattan"
+    assert places._neighbourhood({"quarter": "Shibuya"}, "Shibuya") == ""  # would just repeat the city
+    assert places._neighbourhood({"county": "Quba District"}, "Quba") == ""  # no neighbourhood: the city name stays
 
 
 def test_lookup_is_cached_and_identifies_skymate(monkeypatch):
@@ -24,16 +27,16 @@ def test_lookup_is_cached_and_identifies_skymate(monkeypatch):
 
     def fake_get(url, **kw):
         calls.append(kw)
-        return FakeResponse({"village": "Ahmedli", "city": "Baku", "country_code": "az"})
+        return FakeResponse({"road": "Vung Tau Street", "village": "Ahmedli", "postcode": "1126", "country_code": "az"})
 
     monkeypatch.setattr(places.requests, "get", fake_get)
     monkeypatch.setattr(places, "_last_request", 0.0)
-    first = places.lookup(40.37561, 49.95682)
-    second = places.lookup(40.37564, 49.95679)  # same ~100 m square
-    assert first == second == {"name": "Ahmedli, Baku", "country": "AZ"}
+    first = places.lookup(40.375612, 49.956821, "Baku")
+    second = places.lookup(40.375588, 49.956799, "Baku")  # same ~10 m square
+    assert first == second == {"name": "Ahmedli, Baku", "country": "AZ", "detail": "Vung Tau Street · 1126"}
     assert len(calls) == 1
     assert calls[0]["headers"]["User-Agent"].startswith("SkyMate/")
-    assert calls[0]["params"]["lat"] == "40.376"  # only the rounded position leaves SkyMate
+    assert calls[0]["params"]["lat"] == "40.3756"  # only the rounded position leaves SkyMate
 
 
 def test_failed_lookup_is_not_cached(monkeypatch):
@@ -44,25 +47,23 @@ def test_failed_lookup_is_not_cached(monkeypatch):
 
     monkeypatch.setattr(places.requests, "get", broken)
     monkeypatch.setattr(places, "_last_request", 0.0)
-    assert places.lookup(10.123, 20.456) is None
-    monkeypatch.setattr(places.requests, "get", lambda url, **kw: FakeResponse({"town": "Later"}))
-    assert places.lookup(10.123, 20.456) == {"name": "Later", "country": ""}
+    assert places.lookup(10.123, 20.456, "Somewhere") is None
+    monkeypatch.setattr(places.requests, "get", lambda url, **kw: FakeResponse({"suburb": "Later"}))
+    assert places.lookup(10.123, 20.456, "Somewhere")["name"] == "Later, Somewhere"
 
 
 def test_only_the_visitors_own_position_is_looked_up(monkeypatch):
-    """Search results and city names never reach OpenStreetMap; only precise=1 with coordinates does."""
+    """Search results and typed city names never reach the map service; only precise=1 with coordinates does."""
     called = []
 
     class Stop(Exception):
         pass
 
-    def current(loc):
-        raise Stop(loc["name"])
-
-    monkeypatch.setattr(places, "lookup", lambda lat, lon: called.append((lat, lon)) or {"name": "Ahmedli, Baku", "country": "AZ"})
+    monkeypatch.setattr(places, "lookup",
+                        lambda lat, lon, city: called.append((lat, lon, city)) or {"name": "Ahmedli, Baku", "country": "AZ"})
     monkeypatch.setattr(site.forecast, "resolve_location",
                         lambda q, lat, lon: {"name": "Baku", "country": "AZ", "lat": lat or 40.4, "lon": lon or 49.9})
-    monkeypatch.setattr(site.forecast, "current", current)
+    monkeypatch.setattr(site.forecast, "current", lambda loc: (_ for _ in ()).throw(Stop(loc["name"])))
 
     def shown(q, lat, lon, precise):
         try:
@@ -74,4 +75,4 @@ def test_only_the_visitors_own_position_is_looked_up(monkeypatch):
     assert shown("Baku", None, None, True) == "Baku"     # a typed city name
     assert called == []
     assert shown(None, 40.3756, 49.9568, True) == "Ahmedli, Baku"
-    assert called == [(40.3756, 49.9568)]
+    assert called == [(40.3756, 49.9568, "Baku")]

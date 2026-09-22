@@ -386,10 +386,13 @@ export function WeatherDashboard({ data, units, search, onScene }: {
         {search}
         <section ref={heroRef} aria-labelledby="now-title" aria-live="polite"
           className={cn(card, "relative flex-1 scroll-mt-24 overflow-hidden p-5 sm:p-7")}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="flex min-w-0 items-center gap-1.5 text-sm text-white/80">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-white/80">
               <MapPin aria-hidden="true" className="size-4 shrink-0" />
               <span className="truncate" translate="no">{data.location.name}{data.location.country ? `, ${data.location.country}` : ""}</span>
+              {data.location.detail && (
+                <span className="basis-full pl-5 text-xs text-white/50" translate="no">{data.location.detail}</span>
+              )}
               {data.location.name_source === "osm" && (
                 <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer"
                   className="shrink-0 text-[11px] text-white/45 underline-offset-2 hover:text-white/70 hover:underline">© OpenStreetMap contributors</a>

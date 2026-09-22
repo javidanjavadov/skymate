@@ -22,13 +22,13 @@ log = logging.getLogger("skymate.places")
 URL = os.environ.get("SKYMATE_REVERSE_URL", "https://nominatim.openstreetmap.org/reverse")
 USER_AGENT = "SkyMate/1.0 (+https://skymate-thfc.onrender.com)"
 SCHEMA = ("CREATE TABLE IF NOT EXISTS place_names (cell TEXT PRIMARY KEY, name TEXT NOT NULL, country TEXT, "
-          "created_at TEXT)")
+          "detail TEXT, created_at TEXT)")
 
 _rate_lock = threading.Lock()
 _last_request = 0.0
 
-SMALL = ("neighbourhood", "suburb", "quarter", "city_district", "village", "hamlet")
-BIG = ("city", "town", "municipality", "village", "county")
+# Only the neighbourhood is taken from the map service; the city name stays SkyMate's own.
+PARTS = ("suburb", "quarter", "neighbourhood", "village", "hamlet", "city_district")
 
 
 def init():
@@ -37,13 +37,14 @@ def init():
 
 
 def _cell(lat: float, lon: float) -> str:
-    return f"{lat:.3f},{lon:.3f}"
+    return f"{lat:.4f},{lon:.4f}"
 
 
-def _label(address: dict) -> str:
-    big = next((address[k] for k in BIG if address.get(k)), "")
-    small = next((address[k] for k in SMALL if address.get(k) and address[k] != big), "")
-    return f"{small}, {big}" if small and big else big or small
+def _neighbourhood(address: dict, city: str) -> str:
+    def keep(value: str) -> bool:
+        return bool(value) and "community board" not in value.lower() and value.lower() != city.lower()
+
+    return next((address[k] for k in PARTS if keep(address.get(k, ""))), "")
 
 
 def _fetch(lat: float, lon: float) -> dict | None:
@@ -57,7 +58,7 @@ def _fetch(lat: float, lon: float) -> dict | None:
             time.sleep(wait)
         _last_request = time.monotonic()
         r = requests.get(URL, timeout=4, headers={"User-Agent": USER_AGENT}, params={
-            "format": "jsonv2", "lat": f"{lat:.3f}", "lon": f"{lon:.3f}", "zoom": 16, "addressdetails": 1,
+            "format": "jsonv2", "lat": f"{lat:.4f}", "lon": f"{lon:.4f}", "zoom": 17, "addressdetails": 1,
             "accept-language": "en"})
         r.raise_for_status()
         return r.json().get("address") or {}
@@ -69,28 +70,31 @@ def _fetch(lat: float, lon: float) -> dict | None:
         _rate_lock.release()
 
 
-def lookup(lat: float, lon: float) -> dict | None:
-    """Returns {"name", "country"} for the ~100 m square around the point, or None."""
-    cell = _cell(lat, lon)
+def lookup(lat: float, lon: float, city: str) -> dict | None:
+    """Returns {"name", "country"} like {"Ahmedli, Baku"} for the ~100 m square, or None."""
+    cell = f"{_cell(lat, lon)}|{city}"
     try:
         with store.tx("api") as c:
-            row = c.execute("SELECT name, country FROM place_names WHERE cell = ?", (cell,)).fetchone()
+            row = c.execute("SELECT name, country, detail FROM place_names WHERE cell = ?", (cell,)).fetchone()
     except Exception:
         log.exception("Place-name cache unavailable")
         row = None
     if row:
-        return {"name": row["name"], "country": row["country"]} if row["name"] else None
+        return {"name": row["name"], "country": row["country"], "detail": row["detail"] or ""} if row["name"] else None
     if not URL:
         return None
     address = _fetch(lat, lon)
     if address is None:
         return None  # temporary failure: not cached, try again next time
-    name, country = _label(address), (address.get("country_code") or "").upper()
+    small = _neighbourhood(address, city)
+    name = f"{small}, {city}" if small else ""
+    detail = " · ".join(v for v in (address.get("road"), address.get("postcode")) if v)
+    country = (address.get("country_code") or "").upper()
     try:
         with store.tx("api") as c:
             # An empty name is cached too (open sea, desert), so the same square is never asked twice
-            c.execute("INSERT INTO place_names(cell, name, country, created_at) VALUES (?,?,?,?) "
-                      "ON CONFLICT(cell) DO NOTHING", (cell, name, country, store.now()))
+            c.execute("INSERT INTO place_names(cell, name, country, detail, created_at) VALUES (?,?,?,?,?) "
+                      "ON CONFLICT(cell) DO NOTHING", (cell, name, country, detail, store.now()))
     except Exception:
         log.exception("Could not cache place name")
-    return {"name": name, "country": country} if name else None
+    return {"name": name, "country": country, "detail": detail} if name else None

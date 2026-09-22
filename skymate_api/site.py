@@ -87,9 +87,10 @@ def _dashboard(q: str | None, lat: float | None, lon: float | None, precise: boo
     loc = forecast.resolve_location(q, lat, lon)
     source = "skymate"
     if precise and q is None and lat is not None and lon is not None:
-        exact = places.lookup(lat, lon)  # the visitor's own position: name the neighbourhood, not just the city
+        exact = places.lookup(lat, lon, loc["name"])  # the visitor's own position: name the neighbourhood, not just the city
         if exact:
             loc["name"], loc["country"], source = exact["name"], exact["country"] or loc.get("country", ""), "osm"
+            loc["detail"] = exact.get("detail", "")
     cur = forecast.current(loc)
     hourly = forecast.hourly(loc, 240)["hourly"]
     daily = forecast.daily(loc, 10)["daily"]
@@ -144,7 +145,7 @@ def _dashboard(q: str | None, lat: float | None, lon: float | None, precise: boo
 
     return {
         "location": {"name": loc["name"], "country": loc.get("country", ""), "timezone": loc["timezone"],
-                     "lat": loc["lat"], "lon": loc["lon"], "name_source": source},
+                     "lat": loc["lat"], "lon": loc["lon"], "name_source": source, "detail": loc.get("detail", "")},
         "now": {
             "temperature": measured("temperature"),
             "feels_like": c.get("feels_like"),

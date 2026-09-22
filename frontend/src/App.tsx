@@ -170,9 +170,10 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
 
   /** For the visitor's own position: replace the city name with the neighbourhood, looked up by their browser. */
   const nameNeighbourhood = useCallback(async (q: Query, d: Dashboard, signal: AbortSignal) => {
-    const place = await exactPlace(q.lat!, q.lon!, signal)
+    const place = await exactPlace(q.lat!, q.lon!, d.location.name, signal)
     if (!place) return
-    const named: Dashboard = { ...d, location: { ...d.location, name: place.name, country: place.country || d.location.country, name_source: "osm" } }
+    const named: Dashboard = { ...d, location: { ...d.location, name: place.name, detail: place.detail,
+      country: place.country || d.location.country, name_source: "osm" } }
     setData((prev) => (prev === d ? named : prev))
     remember(q, named)
     document.title = `${named.location.name} Weather — SkyMate`

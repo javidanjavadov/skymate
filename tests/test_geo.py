@@ -23,3 +23,9 @@ def test_district_of_a_big_city_reports_the_city():
 def test_places_outside_the_urban_area_keep_their_name():
     assert geo.reverse(40.4919, 50.1422)["name"] == "Mardakan"
     assert geo.reverse(40.5897, 49.6686)["name"] == "Sumgayit"  # its own region, never merged into Baku
+
+
+def test_timezone_comes_from_the_nearby_city():
+    """The offline boundary lookup answers Asia/Dubai across Azerbaijan, so a nearby city's zone wins."""
+    from skymate_api import forecast
+    assert forecast.resolve_location(None, 40.3756, 49.9568)["timezone"] == "Asia/Baku"
