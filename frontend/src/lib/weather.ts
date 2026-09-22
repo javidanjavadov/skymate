@@ -106,7 +106,7 @@ export async function searchPlaces(q: string, signal: AbortSignal): Promise<Plac
 
 /** OpenStreetMap's reverse lookup, called from the visitor's own browser (© OpenStreetMap contributors). */
 const OSM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
-const PLACE_CACHE = "skymate-places-v4"  // bumped when the name format changes, so old answers are dropped
+const PLACE_CACHE = "skymate-places-v6"  // bumped when the name format changes, so old answers are dropped
 // Only the neighbourhood comes from OpenStreetMap; the city name stays SkyMate's own, because OSM's city field
 // varies by country ("Sabail Raion" for Baku, "Greater London" for London).
 const PARTS = ["suburb", "quarter", "neighbourhood", "village", "hamlet", "city_district"] as const
@@ -128,24 +128,44 @@ export async function exactPlace(lat: number, lon: number, city: string, signal?
   const cell = `${lat.toFixed(4)},${lon.toFixed(4)}|${city}`
   const cache = cachedPlaces()
   if (cache[cell]) return cache[cell]
-  const ask = async (zoom: number) => {
+  const ask = async (zoom: number, dLat = 0, dLon = 0) => {
     const params = new URLSearchParams({
-      format: "jsonv2", lat: lat.toFixed(4), lon: lon.toFixed(4), zoom: String(zoom), addressdetails: "1",
-      "accept-language": "en",
+      format: "jsonv2", lat: (lat + dLat).toFixed(4), lon: (lon + dLon).toFixed(4), zoom: String(zoom),
+      addressdetails: "1", "accept-language": "en",
     })
     const res = await fetch(`${OSM_REVERSE}?${params}`, { signal: signal ?? AbortSignal.timeout(6000) })
-    return res.ok ? ((await res.json()).address as Record<string, string> | undefined) : undefined
+    if (!res.ok) return undefined
+    const body = await res.json()
+    return { ...(body.address as Record<string, string>), _type: String(body.type ?? '') } as Record<string, string>
   }
+  // Streets people name their address by, ahead of motorways and main roads
+  const rank = (type = "") => (["residential", "living_street", "unclassified", "service", "pedestrian"].includes(type) ? 0
+    : ["tertiary", "secondary"].includes(type) ? 1 : 2)
+  // ~100 m north, east, south and west: a lookup only reports a street when the point is almost on it
+  const AROUND = [[0.0009, 0], [0, 0.0012], [-0.0009, 0], [0, -0.0012]]
   try {
-    // Building level first, for the house number; a wider look only if no street was found there
+    // Building level first, for the house number; then a wider look at the same point
     let address = await ask(18)
     if (!address?.road) address = (await ask(17)) ?? address
+    let nearby = false
+    if (!address?.road) {
+      const probes = []
+      for (const [dLat, dLon] of AROUND) {
+        const probe = await ask(17, dLat, dLon)
+        if (probe?.road) probes.push(probe)
+      }
+      const best = probes.sort((a, b) => rank(a._type) - rank(b._type))[0]
+      if (best) { address = { ...address, road: best.road, house_number: "" }; nearby = true }
+    }
     if (!address) return null
     // The street plus the city is exact: "Muhammad Hadi Street, Baku". District names in OpenStreetMap often
     // disagree with local usage (the area around Həzi Aslanov metro is mapped as Ahmedli), so they are used
     // only when no street is known.
-    const street = address.road ? [address.road, address.house_number].filter(Boolean).join(" ") : ""
-    const name = [street || neighbourhood(address, city), city].filter(Boolean).join(", ")
+    const small = neighbourhood(address, city)
+    const exact = [address.road, address.house_number].filter(Boolean).join(" ")
+    const name = address.road
+      ? (nearby ? [`near ${address.road}`, small, city] : [exact, city]).filter(Boolean).join(", ")
+      : [small, city].filter(Boolean).join(", ")
     if (name === city) return null  // nothing more exact than what SkyMate already knows
     const place = { name, detail: "", country: (address.country_code ?? "").toUpperCase() }
     try {
