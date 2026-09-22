@@ -107,7 +107,7 @@ export async function searchPlaces(q: string, signal: AbortSignal): Promise<Plac
 
 /** OpenStreetMap's reverse lookup, called from the visitor's own browser (© OpenStreetMap contributors). */
 const OSM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
-const PLACE_CACHE = "skymate-places-v6"  // bumped when the name format changes, so old answers are dropped
+const PLACE_CACHE = "skymate-places-v7"  // bumped when the name format changes, so old answers are dropped
 // Only the neighbourhood comes from OpenStreetMap; the city name stays SkyMate's own, because OSM's city field
 // varies by country ("Sabail Raion" for Baku, "Greater London" for London).
 const PARTS = ["suburb", "quarter", "neighbourhood", "village", "hamlet", "city_district"] as const
@@ -134,7 +134,11 @@ export async function exactPlace(lat: number, lon: number, city: string, signal?
       format: "jsonv2", lat: (lat + dLat).toFixed(4), lon: (lon + dLon).toFixed(4), zoom: String(zoom),
       addressdetails: "1", "accept-language": "en",
     })
-    const res = await fetch(`${OSM_REVERSE}?${params}`, { signal: signal ?? AbortSignal.timeout(6000) })
+    let res = await fetch(`${OSM_REVERSE}?${params}`, { signal: signal ?? AbortSignal.timeout(6000) })
+    if (res.status === 429) {  // asked too quickly: wait out the limit and try once more
+      await new Promise((r) => setTimeout(r, 1500))
+      res = await fetch(`${OSM_REVERSE}?${params}`, { signal: signal ?? AbortSignal.timeout(6000) })
+    }
     if (!res.ok) return undefined
     const body = await res.json()
     return { ...(body.address as Record<string, string>), _type: String(body.type ?? '') } as Record<string, string>
@@ -142,18 +146,23 @@ export async function exactPlace(lat: number, lon: number, city: string, signal?
   // Streets people name their address by, ahead of motorways and main roads
   const rank = (type = "") => (["residential", "living_street", "unclassified", "service", "pedestrian"].includes(type) ? 0
     : ["tertiary", "secondary"].includes(type) ? 1 : 2)
-  // ~100 m north, east, south and west: a lookup only reports a street when the point is almost on it
-  const AROUND = [[0.0009, 0], [0, 0.0012], [-0.0009, 0], [0, -0.0012]]
+  // A lookup only reports a street when the point is almost on it, so look around: ~100 m, then ~250 m
+  const AROUND = [[0.0009, 0], [0, 0.0012], [-0.0009, 0], [0, -0.0012],
+                  [0.0022, 0], [0, 0.0029], [-0.0022, 0], [0, -0.0029]]
+  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
   try {
-    // Building level first, for the house number; then a wider look at the same point
+    // Building level first, for the house number; then a wider look at the same point.
+    // OpenStreetMap allows one request per second, so every extra look waits its turn.
     let address = await ask(18)
-    if (!address?.road) address = (await ask(17)) ?? address
+    if (!address?.road) { await pause(1100); address = (await ask(17)) ?? address }
     let nearby = false
     if (!address?.road) {
       const probes = []
       for (const [dLat, dLon] of AROUND) {
+        await pause(1100)
         const probe = await ask(17, dLat, dLon)
         if (probe?.road) probes.push(probe)
+        if (probes.length >= 2) break  // enough to choose a sensible one
       }
       const best = probes.sort((a, b) => rank(a._type) - rank(b._type))[0]
       if (best) { address = { ...address, road: best.road, house_number: "" }; nearby = true }
