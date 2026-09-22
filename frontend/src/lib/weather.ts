@@ -175,7 +175,7 @@ export async function exactPlace(lat: number, lon: number, city: string, signal?
     const small = neighbourhood(address, city)
     const exact = [address.road, address.house_number].filter(Boolean).join(" ")
     const name = address.road
-      ? (nearby ? [`near ${address.road}`, small, city] : [exact, city]).filter(Boolean).join(", ")
+      ? (nearby ? [say("place.near", { street: address.road }), small, city] : [exact, city]).filter(Boolean).join(", ")
       : [small, city].filter(Boolean).join(", ")
     if (name === city) return null  // nothing more exact than what SkyMate already knows
     const place = { name, detail: "", country: (address.country_code ?? "").toUpperCase() }
@@ -191,7 +191,8 @@ export async function exactPlace(lat: number, lon: number, city: string, signal?
 
 /** Dates and numbers follow the chosen language, not only the browser's. */
 const loc = () => localeOf(getLanguage())
-const say = (key: Parameters<typeof translate>[1]) => translate(getLanguage(), key)
+const say = (key: Parameters<typeof translate>[1], values?: Record<string, string | number>) =>
+  translate(getLanguage(), key, values)
 
 export const fmt = {
   temp(c: number | null | undefined, u: Units) {
@@ -239,76 +240,66 @@ export const fmt = {
   },
 }
 
-export const CONDITION_TITLE: Record<Condition, string> = {
-  Clear: "Clear Sky",
-  Clouds: "Cloudy",
-  Rain: "Rainy Day",
-  Drizzle: "Light Drizzle",
-  Thunderstorm: "Thunderstorms",
-  Snow: "Snowfall",
-  Mist: "Misty",
-  Fog: "Foggy",
-}
-
 export function title(now: { condition: Condition; is_day: boolean; description: string }) {
-  if (now.condition === "Clear" && !now.is_day) return "Clear Night"
+  if (now.condition === "Clear" && !now.is_day) return say("cond.clearNight")
   if (now.condition === "Clouds") {
     const d = now.description.toLowerCase()
-    if (d.includes("few") || d.includes("scattered")) return "Partly Cloudy"
-    if (d.includes("overcast")) return "Overcast"
+    if (d.includes("few") || d.includes("scattered")) return say("cond.partly")
+    if (d.includes("overcast")) return say("cond.overcast")
   }
-  return CONDITION_TITLE[now.condition] ?? "Weather"
+  return say(`cond.${now.condition}` as Parameters<typeof say>[0])
 }
 
 export function summary(d: Dashboard, u: Units) {
-  return d.daily[0] ? daySummary(d.daily[0], "Today", u, d.uv.max_today) : ""
+  return d.daily[0] ? daySummary(d.daily[0], say("day.today"), u, d.uv.max_today) : ""
 }
 
-/** One-line outlook for a day; `when` is "Today", "Tomorrow" or a weekday name. */
+/** One line for a day; `when` is the already-translated "Today", "Tomorrow" or weekday name. */
 export function daySummary(today: Day, when: string, u: Units, uvMax: number | null = today.uv_max ?? null) {
   const max = fmt.temp(today.max, u)
-  const rain = today.precipitation ?? 0
-  const On = when === "Today" || when === "Tomorrow" ? when : `On ${when}`
+  const values = { when, max, description: today.description || say("cond.Clouds").toLowerCase() }
   switch (today.condition) {
-    case "Thunderstorm":
-      return `${On}, expect thunderstorms with temperatures reaching a maximum of ${max}. Stay indoors during lightning and avoid open areas.`
-    case "Rain":
-      return `${On}, expect a rainy day with temperatures reaching a maximum of ${max}. Grab your umbrella and raincoat before heading out.`
-    case "Drizzle":
-      return `${On}, expect light drizzle and a maximum of ${max}. A light jacket and an umbrella will keep you comfortable.`
-    case "Snow":
-      return `${On}, expect snow with a maximum of ${max}. Allow extra time for travel and dress in warm layers.`
+    case "Thunderstorm": return say("sum.thunder", values)
+    case "Rain": return say("sum.rain", values)
+    case "Drizzle": return say("sum.drizzle", values)
+    case "Snow": return say("sum.snow", values)
     case "Fog":
-    case "Mist":
-      return `${On}, expect reduced visibility and a maximum of ${max}. Take extra care on the roads.`
-    case "Clear":
-      return `${On}, expect clear skies with temperatures reaching a maximum of ${max}.${(uvMax ?? 0) >= 6 ? " UV is high, so use sun protection." : " A great day to be outside."}`
-    default:
-      return `${On}, expect ${today.description || "clouds"} with a maximum of ${max}.${rain >= 1 ? " Keep an umbrella handy." : ""}`
+    case "Mist": return say("sum.fog", values)
+    case "Clear": return say((uvMax ?? 0) >= 6 ? "sum.clearUv" : "sum.clear", values)
+    default: return say((today.precipitation ?? 0) >= 1 ? "sum.cloudsRain" : "sum.clouds", values)
   }
 }
 
 export function feelsNote(v: { temperature: number | null; feels_like: number | null; humidity: number | null; wind_speed: number | null }) {
   const { temperature: t, feels_like: f, humidity: h, wind_speed: w } = v
   if (t == null || f == null) return ""
-  if (f - t >= 1.5) return (h ?? 0) >= 60 ? "Humidity is making it feel warmer." : "Sunshine is making it feel warmer."
-  if (t - f >= 1.5) return (w ?? 0) >= 4 ? "Wind is making it feel colder." : "It feels slightly colder than it is."
-  return "Similar to the actual temperature."
+  if (f - t >= 1.5) return say((h ?? 0) >= 60 ? "feels.humid" : "feels.sun")
+  if (t - f >= 1.5) return say((w ?? 0) >= 4 ? "feels.wind" : "feels.colder")
+  return say("feels.same")
 }
 
 export function uvCategory(raw: number | null) {
-  if (raw == null) return "Unknown"
+  if (raw == null) return say("uv.unknown")
   const v = Math.round(raw)
-  if (v < 3) return "Low"
-  if (v < 6) return "Moderate"
-  if (v < 8) return "High"
-  if (v < 11) return "Very High"
-  return "Extreme"
+  if (v < 3) return say("uv.low")
+  if (v < 6) return say("uv.moderate")
+  if (v < 8) return say("uv.high")
+  if (v < 11) return say("uv.veryHigh")
+  return say("uv.extreme")
 }
+
+/** Translated name of a warning coming from the server in English. */
+export function alertName(event: string) {
+  const key = `alert.${event}` as Parameters<typeof translate>[1]
+  const text = translate(getLanguage(), key)
+  return text === key ? event : text   // a warning we have no wording for keeps the server's English
+}
+
+const DIRECTIONS = ["dir.N", "dir.NE", "dir.E", "dir.SE", "dir.S", "dir.SW", "dir.W", "dir.NW"] as const
 
 export function compass(deg: number | null) {
   if (deg == null) return ""
-  return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(deg / 45) % 8]
+  return say(DIRECTIONS[Math.round(deg / 45) % 8])
 }
 
 export function countryName(code: string) {

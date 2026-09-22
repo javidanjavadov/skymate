@@ -10,6 +10,7 @@ import { BorderBeam } from "@/components/ui/border-beam"
 import { Button } from "@/components/ui/button"
 import { MagicCard } from "@/components/ui/magic-card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useT } from "@/lib/i18n"
 import { fmt } from "@/lib/weather"
 import { cn } from "@/lib/utils"
 
@@ -26,6 +27,7 @@ function SectionHead({ kicker, title, children, id }: { kicker: string; title: s
 const glass = "rounded-3xl border border-white/10 bg-slate-950/30"
 
 export function Stats() {
+  const { t } = useT()
   // Last known numbers show instantly; fresh ones replace them when /v1/status answers
   const [s, setS] = useState<{ readings: number; stations: number; days: number } | null>(() => {
     try { return JSON.parse(localStorage.getItem("skymate-stats") ?? "null") } catch { return null }
@@ -45,9 +47,9 @@ export function Stats() {
     return () => ctrl.abort()
   }, [])
   const items = [
-    { label: "Measurements Stored", value: s?.readings },
-    { label: "Weather Stations", value: s?.stations },
-    { label: "Days of Forecast", value: s?.days },
+    { label: t("stats.measurements"), value: s?.readings },
+    { label: t("stats.stations"), value: s?.stations },
+    { label: t("stats.days"), value: s?.days },
   ]
   return (
     <section aria-label="Service statistics" className={cn(glass, "grid grid-cols-2 lg:grid-cols-4 [&>*]:min-w-0 [&>*]:border-white/10 max-lg:[&>*:nth-child(-n+2)]:border-b max-lg:[&>*:nth-child(odd)]:border-r lg:[&>*:not(:first-child)]:border-l")}>
@@ -60,8 +62,8 @@ export function Stats() {
         </div>
       ))}
       <div className="px-4 py-5 sm:px-6">
-        <p className="text-2xl font-semibold text-white sm:text-3xl">Global</p>
-        <p className="text-sm text-white/60">Every City in the World</p>
+        <p className="text-2xl font-semibold text-white sm:text-3xl">{t("stats.global")}</p>
+        <p className="text-sm text-white/60">{t("stats.everyCity")}</p>
       </div>
     </section>
   )

@@ -9,10 +9,10 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { SkyScene } from "@/components/weather/sky"
 import { WeatherIcon } from "@/components/weather/weather-icon"
-import { useT } from "@/lib/i18n"
+import { getLanguage, localeOf, translate, useT } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 import {
-  compass, countryName, daySummary, feelsNote, fmt, searchPlaces, summary, title, uvCategory,
+  alertName, compass, countryName, daySummary, feelsNote, fmt, searchPlaces, summary, title, uvCategory,
   type Dashboard as Data, type Hour, type Place, type Units,
 } from "@/lib/weather"
 
@@ -221,16 +221,17 @@ function UvBar({ value }: { value: number | null }) {
 }
 
 function Compass({ deg }: { deg: number | null }) {
+  const { t } = useT()
   const rotate = deg == null ? 0 : (deg + 180) % 360
   return (
-    <svg viewBox="0 0 120 120" className="size-28 shrink-0 sm:size-32" role="img" aria-label={deg == null ? "Wind direction unknown" : `Wind from ${compass(deg)}`}>
+    <svg viewBox="0 0 120 120" className="size-28 shrink-0 sm:size-32" role="img" aria-label={deg == null ? t("wind.unknown") : t("wind.from", { dir: compass(deg) })}>
       <circle cx="60" cy="60" r="56" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
       <circle cx="60" cy="60" r="44" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="1" />
       {Array.from({ length: 36 }, (_, i) => (
         <line key={i} x1="60" y1="7" x2="60" y2={i % 9 === 0 ? 15 : 11} stroke="rgba(255,255,255,0.4)" strokeWidth="1"
           transform={`rotate(${i * 10} 60 60)`} />
       ))}
-      {[["N", 60, 26], ["E", 95, 64], ["S", 60, 100], ["W", 25, 64]].map(([l, x, y]) => (
+      {[[t("dir.N"), 60, 26], [t("dir.E"), 95, 64], [t("dir.S"), 60, 100], [t("dir.W"), 25, 64]].map(([l, x, y]) => (
         <text key={l as string} x={x as number} y={y as number} textAnchor="middle" fontSize="11" fill="white" fontWeight="600">{l}</text>
       ))}
       {deg != null && (
@@ -247,7 +248,7 @@ function Compass({ deg }: { deg: number | null }) {
 export function DashboardSkeleton() {
   return (
     <div className={panel} aria-busy="true" aria-live="polite">
-      <span className="sr-only">Loading weather…</span>
+      <span className="sr-only">{translate(getLanguage(), "loading.weather")}</span>
       <div className="order-1 space-y-4">
         <Skeleton className="h-12 rounded-full bg-slate-900/30" />
         <Skeleton className="h-[22rem] rounded-3xl bg-slate-900/30" />
@@ -283,24 +284,26 @@ type View = {
 }
 
 function visibilityNote(m: number | null | undefined, lowest = false) {
-  if (m == null) return "No visibility reading nearby."
-  if (m >= 10000) return lowest ? "Clear all day." : "Perfectly clear view."
-  const text = m >= 4000 ? "slightly hazy." : "reduced visibility, take care."
-  return lowest ? `At its lowest: ${text}` : text[0].toUpperCase() + text.slice(1)
+  const key = m == null ? "vis.none"
+    : m >= 10000 ? (lowest ? "vis.dayClear" : "vis.clear")
+    : m >= 4000 ? (lowest ? "vis.dayHazy" : "vis.hazy")
+    : (lowest ? "vis.dayPoor" : "vis.poor")
+  return translate(getLanguage(), key)
 }
 
 function dayName(date: string, index: number, tz: string) {
-  if (index === 0) return "Today"
-  if (index === 1) return "Tomorrow"
-  return new Intl.DateTimeFormat(undefined, { weekday: "long", timeZone: tz }).format(new Date(`${date}T12:00:00Z`))
+  if (index === 0) return translate(getLanguage(), "day.today")
+  if (index === 1) return translate(getLanguage(), "day.tomorrow")
+  return new Intl.DateTimeFormat(localeOf(getLanguage()), { weekday: "long", timeZone: tz }).format(new Date(`${date}T12:00:00Z`))
 }
 
 function buildView(data: Data, sel: Selection, units: Units): View {
+  const t = (key: Parameters<typeof translate>[1], values?: Record<string, string | number>) => translate(getLanguage(), key, values)
   const tz = data.location.timezone
   const now = data.now
-  const humidity = (h: number | null | undefined, dew: number | null | undefined, when: string) => ({
+  const humidity = (h: number | null | undefined, dew: number | null | undefined, when: "hum.now" | "hum.hour" | "hum.day") => ({
     value: h == null ? "–" : `${Math.round(h)}%`,
-    note: dew == null ? undefined : <>The dew point is {fmt.temp(dew, units)} {when}.</>,
+    note: dew == null ? undefined : t(when, { dew: fmt.temp(dew, units) }),
   })
 
   if (sel.kind === "hour") {
@@ -314,16 +317,19 @@ function buildView(data: Data, sel: Selection, units: Units): View {
       temp: h.temperature == null ? null : fmt.tempValue(h.temperature, units),
       range: null,
       title: title(h),
-      summary: `At ${fmt.time(h.time, tz)}, expect ${h.description || title(h).toLowerCase()} and ${fmt.temp(h.temperature, units)}` +
-        (h.wind_speed != null ? `, with wind at ${w.value} ${w.unit}${h.wind_direction != null ? ` from the ${compass(h.wind_direction)}` : ""}.` : "."),
+      summary: h.wind_speed != null
+        ? t("hour.summary", { time: fmt.time(h.time, tz), description: h.description || title(h).toLowerCase(),
+            temp: fmt.temp(h.temperature, units), wind: w.value, unit: w.unit, dir: compass(h.wind_direction) })
+        : t("hour.summaryNoWind", { time: fmt.time(h.time, tz), description: h.description || title(h).toLowerCase(),
+            temp: fmt.temp(h.temperature, units) }),
       feels: { value: fmt.temp(h.feels_like, units), note: feelsNote(h) },
       precip: {
         value: `${fmt.rain(h.precipitation_rate, units)}/h`,
-        note: (h.precipitation_rate ?? 0) > 0 ? "Expected rate at this hour." : "No rain expected at this hour.",
+        note: t((h.precipitation_rate ?? 0) > 0 ? "precip.hour" : "precip.hourNone"),
       },
       visibility: { value: fmt.distance(h.visibility, units), note: visibilityNote(h.visibility) },
-      humidity: humidity(h.humidity, h.dew_point, "at this hour"),
-      uv: { value: h.uv_index, note: (h.uv_index ?? 0) >= 3 ? "Use sun protection at this hour." : "No sun protection needed at this hour." },
+      humidity: humidity(h.humidity, h.dew_point, "hum.hour"),
+      uv: { value: h.uv_index, note: t((h.uv_index ?? 0) >= 3 ? "uvnote.hour" : "uvnote.hourNone") },
       wind: { speed: h.wind_speed, gust: h.wind_gust, direction: h.wind_direction, label: "wind" },
     }
   }
@@ -340,18 +346,18 @@ function buildView(data: Data, sel: Selection, units: Units): View {
       range: `H ${fmt.temp(d.max, units)} · L ${fmt.temp(d.min, units)}`,
       title: title({ condition: d.condition, is_day: true, description: d.description }),
       summary: daySummary(d, name, units, d.uv_max ?? null),
-      feels: { value: fmt.temp(d.feels_like_max, units), note: "The warmest it will feel during the day." },
+      feels: { value: fmt.temp(d.feels_like_max, units), note: t("feels.dayMax") },
       precip: {
         value: fmt.rain(d.precipitation, units),
-        note: (d.precipitation ?? 0) >= 1 ? "Expected during the day. Keep an umbrella handy." : "Total expected during the day.",
+        note: t((d.precipitation ?? 0) >= 1 ? "precip.dayUmbrella" : "precip.day"),
       },
       visibility: { value: fmt.distance(d.visibility_min, units), note: visibilityNote(d.visibility_min, true) },
-      humidity: humidity(d.humidity, d.dew_point, "on average"),
+      humidity: humidity(d.humidity, d.dew_point, "hum.day"),
       uv: {
         value: d.uv_max ?? null,
         note: (d.uv_max ?? 0) >= 3
-          ? <>Peak {fmt.number(d.uv_max ?? 0)} ({uvCategory(d.uv_max ?? null)}). Use sun protection around midday.</>
-          : "No sun protection needed.",
+          ? t("uvnote.dayPeak", { value: fmt.number(d.uv_max ?? 0), level: uvCategory(d.uv_max ?? null) })
+          : t("uvnote.dayNone"),
       },
       wind: { speed: d.wind_max ?? null, gust: d.gust_max ?? null, direction: d.wind_direction ?? null, label: "windMax" },
     }
@@ -369,17 +375,17 @@ function buildView(data: Data, sel: Selection, units: Units): View {
     feels: { value: fmt.temp(now.feels_like, units), note: feelsNote(now) },
     precip: {
       value: fmt.rain(data.precipitation.today_mm, units),
-      note: <>Today · {fmt.rain(data.precipitation.next_24h_mm, units)} expected in the next 24&nbsp;h</>,
+      note: t("precip.next24", { rain: fmt.rain(data.precipitation.next_24h_mm, units) }),
     },
     visibility: { value: fmt.distance(now.visibility, units), note: visibilityNote(now.visibility) },
-    humidity: humidity(now.humidity, now.dew_point, "right now"),
+    humidity: humidity(now.humidity, now.dew_point, "hum.now"),
     uv: {
       value: now.uv_index,
       note: data.uv.protect_until
-        ? <>Use sun protection until {fmt.time(data.uv.protect_until, tz)}.</>
+        ? t("uvnote.until", { time: fmt.time(data.uv.protect_until, tz) })
         : (data.uv.max_today ?? 0) >= 3
-          ? <>Today’s peak: {fmt.number(data.uv.max_today ?? 0)} ({uvCategory(data.uv.max_today)}). Use sun protection around midday.</>
-          : "No sun protection needed today.",
+          ? t("uvnote.peak", { value: fmt.number(data.uv.max_today ?? 0), level: uvCategory(data.uv.max_today) })
+          : t("uvnote.none"),
     },
     wind: { speed: now.wind_speed, gust: now.wind_gust, direction: now.wind_direction, label: "wind" },
   }
@@ -405,6 +411,7 @@ function sceneFor(data: Data, sel: Selection): SkyScene {
 
 /** Temperature curve with rain bars for the hours ahead. */
 function HourlyChart({ hours, units, tz }: { hours: Hour[]; units: Units; tz: string }) {
+  const { t: tr } = useT()
   const id = useId()
   const temps = hours.map((h) => (h.temperature == null ? null : fmt.tempValue(h.temperature, units)))
   const known = temps.filter((t): t is number => t != null)
@@ -418,13 +425,12 @@ function HourlyChart({ hours, units, tz }: { hours: Hour[]; units: Units; tz: st
   const line = points.map(([px, py], i) => `${i ? "L" : "M"}${px.toFixed(1)},${py.toFixed(1)}`).join(" ")
   const area = `${line} L${points[points.length - 1][0].toFixed(1)},${H - padBottom} L${points[0][0].toFixed(1)},${H - padBottom} Z`
   const rain = hours.map((h) => Math.min((h.precipitation_rate ?? 0) / 2, 1))  // 2 mm/h fills the bar
-  const wet = rain.some((r) => r > 0.02)
 
   return (
     <figure className="mt-3">
-      <figcaption className="sr-only">Temperature for the hours ahead{wet ? ", with expected rain" : ""}</figcaption>
+      <figcaption className="sr-only">{tr("chart.label")}</figcaption>
       <svg viewBox={`0 0 ${W} ${H}`} className="h-36 w-full" role="img"
-        aria-label={`Temperatures from ${fmt.temp(Math.min(...known), units)} to ${fmt.temp(Math.max(...known), units)} over the next hours`}>
+        aria-label={tr("chart.label")}>
         <defs>
           <linearGradient id={`${id}-fill`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#7cc7ff" stopOpacity="0.35" />
@@ -444,7 +450,7 @@ function HourlyChart({ hours, units, tz }: { hours: Hour[]; units: Units; tz: st
               <>
                 <text x={x(i)} y={y(t) - 10} textAnchor="middle" fontSize="15" fontWeight="500" fill="#fff">{t}°</text>
                 <text x={x(i)} y={H - 10} textAnchor="middle" fontSize="12" fill="rgba(255,255,255,0.55)">
-                  {i === 0 ? "Now" : fmt.hour(hours[i].time, tz)}
+                  {i === 0 ? tr("now.badge") : fmt.hour(hours[i].time, tz)}
                 </text>
               </>
             )}
@@ -504,14 +510,15 @@ function TrustPanel({ data, units }: { data: Data; units: Units }) {
   const rows: [string, ReactNode, string][] = [
     m
       ? [t("trust.measuredAt"), <><span translate="no">{m.station}</span>, {fmt.number(m.distance_km, 1)}&nbsp;km away</>,
-         `Reading from ${fmt.age(m.age_minutes)}`]
-      : [t("trust.measuredAt"), t("trust.noStation"), "Showing the forecast model instead"],
+         t("trust.reading", { age: fmt.age(m.age_minutes) })]
+      : [t("trust.measuredAt"), t("trust.noStation"), t("trust.showingModel")],
     [t("trust.model"), (data.meta.model ?? "GFS").toUpperCase(),
-     run ? `Run of ${run.toISOString().slice(11, 16)} UTC, ${fmt.number(data.meta.data_age_hours ?? 0, 1)} h ago` : "Latest available run"],
+     run ? t("trust.run", { time: run.toISOString().slice(11, 16), age: fmt.number(data.meta.data_age_hours ?? 0, 1) })
+         : t("trust.runLatest")],
     gap != null
       ? [t("trust.compare"), <>{fmt.temp(model, units)} — {fmt.temp(station, units)}</>,
-         gap < 1 ? `Off by ${fmt.number(gap, 1)}°, so SkyMate shows the station` : `Off by ${fmt.number(gap, 1)}° right now — the station wins`]
-      : ["What you see", "The station reading", "Forecast values only where no station covers you"],
+         t(gap < 1 ? "trust.gapSmall" : "trust.gapBig", { gap: fmt.number(gap, 1) })]
+      : [t("trust.what"), t("trust.stationReading"), t("trust.forecastOnly")],
   ]
   return (
     <section aria-labelledby="trust-title" className={cn(card, "order-4 p-4 sm:p-5 lg:col-span-2")}>
@@ -526,8 +533,7 @@ function TrustPanel({ data, units }: { data: Data; units: Units }) {
         ))}
       </dl>
       <p className="mt-4 border-t border-white/10 pt-3 text-[13px] text-white/50">
-        Station measurements from airport (METAR) and national weather networks; forecasts from NOAA GFS and ECMWF open
-        data. SkyMate keeps its own copy of both. <a className="text-sky-300 underline-offset-4 hover:underline" href="/#measured">How it works</a>
+        {t("trust.sources")} <a className="text-sky-300 underline-offset-4 hover:underline" href="/#measured">{t("trust.how")}</a>
       </p>
     </section>
   )
@@ -617,7 +623,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
             <p className="mt-2 text-[5.5rem] leading-none font-light tracking-tight text-white tabular-nums sm:text-[7rem]">
               {view.temp == null ? "–" : view.temp}
               <span aria-hidden="true">°</span>
-              <span className="sr-only">{units === "imperial" ? "degrees Fahrenheit" : "degrees Celsius"}</span>
+              <span className="sr-only">{t(units === "imperial" ? "unit.fahrenheit" : "unit.celsius")}</span>
             </p>
             {view.range && <p className="mt-1 text-sm tabular-nums text-white/70">{view.range}</p>}
             <h2 id="now-title" className="mt-2 text-balance text-3xl font-medium text-white sm:text-4xl">{view.title}</h2>
@@ -630,13 +636,13 @@ export function WeatherDashboard({ data, units, search, onScene }: {
           </div>
 
           {sel.kind === "now" && data.alerts.length > 0 && (
-            <ul className="mt-6 space-y-2" aria-label="Weather warnings">
+            <ul className="mt-6 space-y-2" aria-label={t("aria.warnings")}>
               {data.alerts.map((a) => (
                 <li key={a.event + a.start}
                   className={cn("flex items-center gap-2 rounded-xl px-3 py-2 text-sm",
                     a.severity === "severe" ? "bg-red-500/20 text-red-100" : "bg-amber-400/15 text-amber-100")}>
                   <AlertTriangle aria-hidden="true" className="size-4 shrink-0" />
-                  <span className="min-w-0"><strong className="font-medium">{a.event}</strong> · {a.start === a.end ? <>around {fmt.time(a.start, tz)}</> : <>{fmt.time(a.start, tz)}–{fmt.time(a.end, tz)}</>}</span>
+                  <span className="min-w-0"><strong className="font-medium">{alertName(a.event)}</strong> · {a.start === a.end ? t("alert.around", { time: fmt.time(a.start, tz) }) : <>{fmt.time(a.start, tz)}–{fmt.time(a.end, tz)}</>}</span>
                 </li>
               ))}
             </ul>
@@ -661,7 +667,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
             <CardTitle id="forecast-title" icon={tab === "hourly" ? <Clock /> : <CalendarDays />}>
               {tab === "hourly" ? t("card.hourly") : t("card.daily", { n: data.daily.length })}
             </CardTitle>
-            <div role="tablist" aria-label="Forecast range" className="flex shrink-0 rounded-full bg-white/10 p-1">
+            <div role="tablist" aria-label={t("aria.range")} className="flex shrink-0 rounded-full bg-white/10 p-1">
               {([["hourly", t("tab.hourly")], ["daily", t("tab.days", { n: data.daily.length })]] as const).map(([key, label]) => (
                 <button key={key} type="button" role="tab" id={`tab-${key}`} aria-selected={tab === key} aria-controls="forecast-panel"
                   onClick={() => setTab(key)}
@@ -675,7 +681,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
           <div className="mt-3 border-t border-white/10" />
           <div id="forecast-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
             {tab === "hourly" && <HourlyChart hours={hourly} units={units} tz={tz} />}
-            <ol key={tab} role="list" aria-label={tab === "hourly" ? "Hourly forecast, scroll horizontally" : "Daily forecast, scroll horizontally"}
+            <ol key={tab} role="list" aria-label={t(tab === "hourly" ? "aria.hourlyList" : "aria.dailyList")}
               className="scroll-row mt-3 flex snap-x snap-mandatory gap-2 overflow-x-auto p-0.5 pb-2 animate-in fade-in duration-300">
               {tab === "hourly" ? hourly.map((h, i) => {
                 const selected = i === 0 ? sel.kind === "now" : sel.kind === "hour" && sel.index === firstHour + i
@@ -684,7 +690,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
                     <button type="button" aria-pressed={selected}
                       onClick={() => select(i === 0 ? { kind: "now" } : { kind: "hour", index: firstHour + i })}
                       className={cn(choice, "gap-2", selected ? "bg-white/20 ring-1 ring-white/25" : "hover:bg-white/10")}>
-                      <span className="whitespace-nowrap text-sm text-white/75">{i === 0 ? "Now" : fmt.hour(h.time, tz)}</span>
+                      <span className="whitespace-nowrap text-sm text-white/75">{i === 0 ? t("now.badge") : fmt.hour(h.time, tz)}</span>
                       <span className="text-2xl font-medium tabular-nums text-white">{fmt.temp(h.temperature, units)}</span>
                       <WeatherIcon condition={h.condition} isDay={h.is_day} className="size-6" />
                     </button>
@@ -696,7 +702,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
                   <li key={d.date} className="shrink-0 snap-start">
                     <button type="button" aria-pressed={selected} onClick={() => select({ kind: "day", index: i })}
                       className={cn(choice, "gap-1", selected ? "bg-white/20 ring-1 ring-white/25" : "hover:bg-white/10")}>
-                      <span className="whitespace-nowrap text-sm text-white/80">{i === 0 ? "Today" : fmt.weekday(d.date, tz)}</span>
+                      <span className="whitespace-nowrap text-sm text-white/80">{i === 0 ? t("day.today") : fmt.weekday(d.date, tz)}</span>
                       <span className="text-xs text-white/50 tabular-nums">{fmt.dayMonth(d.date, tz)}</span>
                       <span className="mt-1 text-2xl font-medium tabular-nums text-white">{fmt.temp(d.max, units)}</span>
                       <span className="text-xs tabular-nums text-white/55">{fmt.temp(d.min, units)}</span>

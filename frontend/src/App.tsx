@@ -206,7 +206,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
 
   return (
     <>
-      <h1 className="sr-only">SkyMate live weather{data ? ` for ${data.location.name}` : ""}</h1>
+      <h1 className="sr-only">{translate(getLanguage(), "aria.liveWeather")}{data ? `: ${data.location.name}` : ""}</h1>
       <div ref={topRef} className="space-y-6">
         {data ? <div key={data.location.name} className="sky-fade-in"><WeatherDashboard data={data} units={units} search={search} onScene={setCondition} /></div> : (
           error ? (
@@ -261,7 +261,7 @@ export default function App() {
   return (
     <>
       <a href="#main" className="sr-only z-50 rounded-lg bg-white px-4 py-2 text-slate-900 focus:not-sr-only focus:fixed focus:left-4 focus:top-4">
-        Skip to Content
+        {translate(getLanguage(), "aria.skip")}
       </a>
       <Sky scene={skyPreview ?? sky} paused={paused} active={skyActive} />
       <ForegroundRain scene={skyPreview ?? sky} paused={paused} active={skyActive} />
