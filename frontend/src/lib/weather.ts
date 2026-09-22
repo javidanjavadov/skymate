@@ -104,6 +104,50 @@ export async function searchPlaces(q: string, signal: AbortSignal): Promise<Plac
   return ((await res.json()) as { places: Place[] }).places
 }
 
+/** OpenStreetMap's reverse lookup, called from the visitor's own browser (© OpenStreetMap contributors). */
+const OSM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
+const PLACE_CACHE = "skymate-places"
+const SMALL = ["neighbourhood", "suburb", "quarter", "city_district", "village", "hamlet"] as const
+const BIG = ["city", "town", "municipality", "village", "county"] as const
+
+function placeLabel(address: Record<string, string>) {
+  const big = BIG.map((k) => address[k]).find(Boolean) ?? ""
+  const small = SMALL.map((k) => address[k]).find((v) => v && v !== big) ?? ""
+  return small && big ? `${small}, ${big}` : big || small
+}
+
+function cachedPlaces(): Record<string, { name: string; country: string }> {
+  try { return JSON.parse(localStorage.getItem(PLACE_CACHE) ?? "{}") } catch { return {} }
+}
+
+/**
+ * The neighbourhood around a point, e.g. "Ahmedli, Baku". Used only for the visitor's own position.
+ * Answers are cached per ~100 m square in the browser, as the Nominatim usage policy requires.
+ */
+export async function exactPlace(lat: number, lon: number, signal?: AbortSignal) {
+  const cell = `${lat.toFixed(3)},${lon.toFixed(3)}`
+  const cache = cachedPlaces()
+  if (cache[cell]) return cache[cell]
+  const params = new URLSearchParams({
+    format: "jsonv2", lat: lat.toFixed(3), lon: lon.toFixed(3), zoom: "16", addressdetails: "1", "accept-language": "en",
+  })
+  try {
+    const res = await fetch(`${OSM_REVERSE}?${params}`, { signal: signal ?? AbortSignal.timeout(6000) })
+    if (!res.ok) return null
+    const address = (await res.json()).address as Record<string, string> | undefined
+    const name = address ? placeLabel(address) : ""
+    if (!name) return null
+    const place = { name, country: (address?.country_code ?? "").toUpperCase() }
+    try {
+      const entries = Object.entries({ ...cache, [cell]: place }).slice(-60)  // keep the cache small
+      localStorage.setItem(PLACE_CACHE, JSON.stringify(Object.fromEntries(entries)))
+    } catch { /* storage unavailable */ }
+    return place
+  } catch {
+    return null  // offline or blocked: the city name from SkyMate's own data stays
+  }
+}
+
 const locale = typeof navigator !== "undefined" ? navigator.languages?.[0] ?? navigator.language : "en"
 
 export const fmt = {

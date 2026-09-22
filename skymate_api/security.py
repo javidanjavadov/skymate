@@ -36,7 +36,8 @@ _BASE_HEADERS = {
     "Cross-Origin-Opener-Policy": "same-origin",
 }
 _HTML_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-             "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+             "img-src 'self' data:; connect-src 'self' https://nominatim.openstreetmap.org; frame-ancestors 'none'; "
+             "base-uri 'none'; form-action 'self'")
 _DOCS_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
              "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https://fastapi.tiangolo.com; "
              "connect-src 'self'; frame-ancestors 'none'")

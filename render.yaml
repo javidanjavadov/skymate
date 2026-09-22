@@ -34,6 +34,9 @@ services:
         value: https://github.com/javidanjavadov/skymate/releases/latest/download/SkyMate.exe
       - key: SKYMATE_MODELS
         value: gfs
+      # Neighbourhood names are looked up by the visitor's browser (OpenStreetMap blocks shared server addresses).
+      - key: SKYMATE_REVERSE_URL
+        value: ""
       - key: SKYMATE_DOWNLOAD_WORKERS
         value: "2"
       - key: SKYMATE_RUNS_TO_KEEP

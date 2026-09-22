@@ -96,8 +96,8 @@ export function Privacy() {
       <ul>
         <li>Standard request logs. The website uses no cookies, analytics or trackers.</li>
         <li>If you allow your location, your coordinates are used to fetch the weather and are not stored with anything that
-          identifies you. To name your neighbourhood, SkyMate sends the position rounded to about 100&nbsp;m to OpenStreetMap
-          (Nominatim) the first time anyone views that area, and keeps only the area’s name.</li>
+          identifies you. To name your neighbourhood, your browser asks OpenStreetMap
+          (Nominatim) directly, sending only the position rounded to about 100&nbsp;m, and remembers the answer on your device.</li>
         <li>Your last viewed place and its weather are saved in your own browser, not on SkyMate’s servers, so the page opens
           instantly next time. Clearing your browser’s site data removes them.</li>
       </ul>

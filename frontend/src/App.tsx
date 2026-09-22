@@ -7,7 +7,7 @@ import { Header } from "@/components/site/header"
 import { Privacy, Terms } from "@/components/site/legal"
 import { DashboardSkeleton, SearchBar, WeatherDashboard } from "@/components/weather/dashboard"
 import { ForegroundRain, Sky, type SkyScene } from "@/components/weather/sky"
-import { fetchDashboard, WeatherError, type Dashboard, type Units } from "@/lib/weather"
+import { exactPlace, fetchDashboard, WeatherError, type Dashboard, type Units } from "@/lib/weather"
 
 const DEFAULT_CITY = "Baku"
 const CONDITIONS = ["Clear", "Clouds", "Rain", "Drizzle", "Thunderstorm", "Snow", "Mist", "Fog"] as const
@@ -155,6 +155,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
       .then((d) => {
         setData(d)
         remember(query, d)
+        if (query.gps && d.location.name_source !== "osm") nameNeighbourhood(query, d, ctrl.signal)
         setCondition({ condition: d.now.condition, isDay: d.now.is_day, cloudCover: d.now.cloud_cover })
         syncUrl(query)
         document.title = `${d.location.name} Weather — SkyMate`
@@ -166,6 +167,16 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
       .finally(() => { if (!ctrl.signal.aborted) setBusy(false) })
     return () => ctrl.abort()
   }, [query, setCondition])
+
+  /** For the visitor's own position: replace the city name with the neighbourhood, looked up by their browser. */
+  const nameNeighbourhood = useCallback(async (q: Query, d: Dashboard, signal: AbortSignal) => {
+    const place = await exactPlace(q.lat!, q.lon!, signal)
+    if (!place) return
+    const named: Dashboard = { ...d, location: { ...d.location, name: place.name, country: place.country || d.location.country, name_source: "osm" } }
+    setData((prev) => (prev === d ? named : prev))
+    remember(q, named)
+    document.title = `${named.location.name} Weather — SkyMate`
+  }, [])
 
   useEffect(() => { if (error) errorRef.current?.focus() }, [error])
 
