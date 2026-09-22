@@ -96,10 +96,33 @@ app.include_router(hosting.router)
 app.mount("/app", StaticFiles(directory=STATIC / "web" / "app"), name="web-assets")
 
 
-@app.get("/favicon.svg", include_in_schema=False)
-def favicon():
-    return FileResponse(STATIC / "web" / "favicon.svg", media_type="image/svg+xml",
-                        headers={"Cache-Control": "public, max-age=86400"})
+# Files the browser asks for by a fixed name: icons, the install manifest, the offline worker, the share image.
+ROOT_FILES = {
+    "favicon.svg": "image/svg+xml",
+    "apple-touch-icon.png": "image/png",
+    "icon-192.png": "image/png",
+    "icon-512.png": "image/png",
+    "icon-maskable.png": "image/png",
+    "social.png": "image/png",
+    "manifest.webmanifest": "application/manifest+json",
+    "sw.js": "text/javascript",
+}
+
+
+def _serve_root_file(filename: str, media_type: str):
+    def handler():
+        path = STATIC / "web" / filename
+        if not path.is_file():
+            raise StarletteHTTPException(status_code=404)
+        # The worker must never be stale, or visitors keep an old page shell
+        cache = "no-cache" if filename == "sw.js" else "public, max-age=86400"
+        return FileResponse(path, media_type=media_type, headers={"Cache-Control": cache})
+
+    return handler
+
+
+for _name, _type in ROOT_FILES.items():
+    app.add_api_route(f"/{_name}", _serve_root_file(_name, _type), methods=["GET"], include_in_schema=False)
 
 
 # ─── Middleware: request id, public rate limit, security headers ─────────────

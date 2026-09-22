@@ -5,7 +5,7 @@ import { Cta, Developers, Faq, Features, Measured, Pricing, Stats, TelegramBot }
 import { Footer } from "@/components/site/footer"
 import { Header } from "@/components/site/header"
 import { Privacy, Terms } from "@/components/site/legal"
-import { DashboardSkeleton, SearchBar, WeatherDashboard } from "@/components/weather/dashboard"
+import { DashboardSkeleton, SavedCities, SearchBar, WeatherDashboard } from "@/components/weather/dashboard"
 import { ForegroundRain, Sky, type SkyScene } from "@/components/weather/sky"
 import { exactPlace, fetchDashboard, WeatherError, type Dashboard, type Units } from "@/lib/weather"
 
@@ -184,6 +184,10 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
   const search = (
     <div>
       <SearchBar busy={busy} onSelect={(p) => setQuery({ lat: p.lat, lon: p.lon })} onLocate={() => locate(false)} />
+      <SavedCities
+        current={data ? { name: data.location.name, country: data.location.country, lat: data.location.lat, lon: data.location.lon } : null}
+        onSelect={(p) => setQuery({ lat: p.lat, lon: p.lon })}
+      />
       <p ref={errorRef} tabIndex={-1} role="alert" aria-live="polite"
         className={error ? "mt-2 rounded-xl bg-red-500/15 px-3 py-2 text-sm text-red-100 outline-none" : "sr-only"}>
         {error ?? ""}

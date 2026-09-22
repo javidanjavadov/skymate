@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import {
-  AlertTriangle, CalendarDays, Clock, Droplet, Droplets, Eye, LocateFixed, MapPin, Radio, RotateCcw, Search, Sun, Thermometer, Wind,
+  AlertTriangle, CalendarDays, Clock, Droplet, Droplets, Eye, LocateFixed, MapPin, Radio, RotateCcw, Search, Star, Sun, Sunrise,
+  Thermometer, Wind,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -11,7 +12,7 @@ import { WeatherIcon } from "@/components/weather/weather-icon"
 import { cn } from "@/lib/utils"
 import {
   compass, countryName, daySummary, feelsNote, fmt, searchPlaces, summary, title, uvCategory,
-  type Dashboard as Data, type Place, type Units,
+  type Dashboard as Data, type Hour, type Place, type Units,
 } from "@/lib/weather"
 
 // Two equal columns that end on the same line; the sky shows between the cards.
@@ -147,6 +148,60 @@ export function SearchBar({ onSelect, onLocate, busy }: {
         ))}
       </ul>
     </form>
+  )
+}
+
+export type Saved = { name: string; country: string; lat: number; lon: number }
+
+const SAVED_KEY = "skymate-saved"
+
+function readSaved(): Saved[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(SAVED_KEY) ?? "[]")
+    return Array.isArray(list) ? list.slice(0, 8) : []
+  } catch {
+    return []
+  }
+}
+
+const sameSpot = (a: Saved, b: Saved) => Math.abs(a.lat - b.lat) < 0.05 && Math.abs(a.lon - b.lon) < 0.05
+
+/** Cities the visitor saved, for switching in one tap. Kept in their browser only. */
+export function SavedCities({ current, onSelect }: { current: Saved | null; onSelect: (place: Saved) => void }) {
+  const [saved, setSaved] = useState<Saved[]>(readSaved)
+  const isSaved = current ? saved.some((s) => sameSpot(s, current)) : false
+
+  const write = (list: Saved[]) => {
+    setSaved(list)
+    try { localStorage.setItem(SAVED_KEY, JSON.stringify(list)) } catch { /* storage unavailable */ }
+  }
+  const toggle = () => {
+    if (!current) return
+    write(isSaved ? saved.filter((s) => !sameSpot(s, current)) : [current, ...saved].slice(0, 8))
+  }
+
+  if (!current && !saved.length) return null
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      {current && (
+        <button type="button" onClick={toggle} aria-pressed={isSaved}
+          className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
+            isSaved ? "border-amber-300/40 bg-amber-300/15 text-amber-100" : "border-white/15 bg-slate-950/30 text-white/80 hover:bg-white/10")}>
+          <Star aria-hidden="true" className={cn("size-4", isSaved && "fill-amber-200 text-amber-200")} />
+          {isSaved ? "Saved" : "Save this place"}
+        </button>
+      )}
+      {saved.map((place) => {
+        const active = current ? sameSpot(place, current) : false
+        return (
+          <button key={`${place.name}-${place.lat}`} type="button" onClick={() => onSelect(place)} aria-current={active || undefined}
+            className={cn("rounded-full border px-3 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
+              active ? "border-white/25 bg-white/15 text-white" : "border-white/10 bg-slate-950/30 text-white/75 hover:bg-white/10")}>
+            <span translate="no">{place.name}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -345,6 +400,96 @@ function sceneFor(data: Data, sel: Selection): SkyScene {
   return { condition: data.now.condition, isDay: data.now.is_day, cloudCover: data.now.cloud_cover }
 }
 
+/** Temperature curve with rain bars for the hours ahead. */
+function HourlyChart({ hours, units, tz }: { hours: Hour[]; units: Units; tz: string }) {
+  const id = useId()
+  const temps = hours.map((h) => (h.temperature == null ? null : fmt.tempValue(h.temperature, units)))
+  const known = temps.filter((t): t is number => t != null)
+  if (known.length < 3) return null
+  const min = Math.min(...known), max = Math.max(...known)
+  const span = Math.max(max - min, 4)
+  const W = 720, H = 150, padX = 26, padTop = 26, padBottom = 34
+  const x = (i: number) => padX + (i * (W - padX * 2)) / Math.max(hours.length - 1, 1)
+  const y = (t: number) => padTop + (1 - (t - min) / span) * (H - padTop - padBottom)
+  const points = temps.map((t, i) => (t == null ? null : [x(i), y(t)] as const)).filter(Boolean) as (readonly [number, number])[]
+  const line = points.map(([px, py], i) => `${i ? "L" : "M"}${px.toFixed(1)},${py.toFixed(1)}`).join(" ")
+  const area = `${line} L${points[points.length - 1][0].toFixed(1)},${H - padBottom} L${points[0][0].toFixed(1)},${H - padBottom} Z`
+  const rain = hours.map((h) => Math.min((h.precipitation_rate ?? 0) / 2, 1))  // 2 mm/h fills the bar
+  const wet = rain.some((r) => r > 0.02)
+
+  return (
+    <figure className="mt-3">
+      <figcaption className="sr-only">Temperature for the hours ahead{wet ? ", with expected rain" : ""}</figcaption>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-36 w-full" role="img"
+        aria-label={`Temperatures from ${fmt.temp(Math.min(...known), units)} to ${fmt.temp(Math.max(...known), units)} over the next hours`}>
+        <defs>
+          <linearGradient id={`${id}-fill`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#7cc7ff" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#7cc7ff" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {/* rain first, so the temperature line stays on top */}
+        {rain.map((r, i) => r > 0.02 && (
+          <rect key={i} x={x(i) - 7} width="14" y={H - padBottom - r * 46} height={r * 46} rx="3" fill="#38bdf8" opacity="0.55" />
+        ))}
+        <path d={area} fill={`url(#${id}-fill)`} />
+        <path d={line} fill="none" stroke="#bfe3ff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        {temps.map((t, i) => t == null ? null : (
+          <g key={i}>
+            <circle cx={x(i)} cy={y(t)} r={i === 0 ? 4.5 : 2.5} fill={i === 0 ? "#fff" : "#bfe3ff"} />
+            {(i === 0 || i % 2 === 0) && (
+              <>
+                <text x={x(i)} y={y(t) - 10} textAnchor="middle" fontSize="15" fontWeight="500" fill="#fff">{t}°</text>
+                <text x={x(i)} y={H - 10} textAnchor="middle" fontSize="12" fill="rgba(255,255,255,0.55)">
+                  {i === 0 ? "Now" : fmt.hour(hours[i].time, tz)}
+                </text>
+              </>
+            )}
+          </g>
+        ))}
+      </svg>
+    </figure>
+  )
+}
+
+/** Sunrise, sunset and where the day currently stands. */
+function SunCard({ sun, tz, className }: { sun: Data["sun"]; tz: string; className?: string }) {
+  const id = useId()
+  if (!sun.sunrise || !sun.sunset) return null
+  const rise = new Date(sun.sunrise).getTime(), set = new Date(sun.sunset).getTime(), now = Date.now()
+  const share = Math.min(Math.max((now - rise) / (set - rise), 0), 1)
+  const daylight = set - rise
+  const hours = Math.floor(daylight / 3600_000), mins = Math.round((daylight % 3600_000) / 60_000)
+  const W = 260, H = 96, r = 96
+  const angle = Math.PI * (1 - share)
+  const cx = W / 2 + Math.cos(angle) * r, cy = H - 6 - Math.sin(angle) * r
+  const up = now >= rise && now <= set
+
+  return (
+    <section aria-labelledby="sun-title" className={cn(card, "min-w-0 p-4 sm:p-5", className)}>
+      <CardTitle id="sun-title" icon={<Sunrise />}>Sun</CardTitle>
+      <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 h-24 w-full" aria-hidden="true">
+        <defs>
+          <linearGradient id={`${id}-arc`} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.25" />
+            <stop offset="50%" stopColor="#fde68a" stopOpacity="0.9" />
+            <stop offset="100%" stopColor="#fbbf24" stopOpacity="0.25" />
+          </linearGradient>
+        </defs>
+        <path d={`M${W / 2 - r},${H - 6} A${r},${r} 0 0 1 ${W / 2 + r},${H - 6}`} fill="none"
+          stroke={`url(#${id}-arc)`} strokeWidth="2" strokeDasharray="4 5" />
+        <line x1="6" y1={H - 6} x2={W - 6} y2={H - 6} stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+        {up && <circle cx={cx} cy={cy} r="7" fill="#fde68a" stroke="#fff7d6" strokeWidth="2" />}
+      </svg>
+      <dl className="mt-1 flex items-end justify-between gap-2 text-sm">
+        <div><dt className="text-white/55">Sunrise</dt><dd className="text-lg font-medium tabular-nums text-white">{fmt.time(sun.sunrise, tz)}</dd></div>
+        <div className="text-center"><dt className="text-white/55">Daylight</dt><dd className="tabular-nums text-white/85">{hours} h {mins} min</dd></div>
+        <div className="text-right"><dt className="text-white/55">Sunset</dt><dd className="text-lg font-medium tabular-nums text-white">{fmt.time(sun.sunset, tz)}</dd></div>
+      </dl>
+    </section>
+  )
+}
+
 export function WeatherDashboard({ data, units, search, onScene }: {
   data: Data
   units: Units
@@ -483,6 +628,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
           </div>
           <div className="mt-3 border-t border-white/10" />
           <div id="forecast-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
+            {tab === "hourly" && <HourlyChart hours={hourly} units={units} tz={tz} />}
             <ol key={tab} role="list" aria-label={tab === "hourly" ? "Hourly forecast, scroll horizontally" : "Daily forecast, scroll horizontally"}
               className="scroll-row mt-3 flex snap-x snap-mandatory gap-2 overflow-x-auto p-0.5 pb-2 animate-in fade-in duration-300">
               {tab === "hourly" ? hourly.map((h, i) => {
@@ -518,6 +664,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
         </section>
 
         <div className="grid flex-1 gap-4 sm:grid-cols-2">
+          <SunCard sun={data.sun} tz={tz} className="sm:col-span-2" />
           <section aria-labelledby="uv-title" className={cn(card, "flex min-w-0 flex-col p-4 sm:p-5")}>
             <CardTitle id="uv-title" icon={<Sun />}>{sel.kind === "day" ? "UV Index · Peak" : "UV Index"}</CardTitle>
             <p className="mt-4 text-4xl font-medium tabular-nums text-white">{view.uv.value == null ? "–" : fmt.number(view.uv.value, 0)}</p>

@@ -15,3 +15,8 @@ createRoot(document.getElementById("root")!).render(
     </MotionConfig>
   </StrictMode>,
 )
+
+// Keeps the page working without a connection and allows adding SkyMate to a phone's home screen
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}) })
+}
