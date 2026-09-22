@@ -106,7 +106,7 @@ export async function searchPlaces(q: string, signal: AbortSignal): Promise<Plac
 
 /** OpenStreetMap's reverse lookup, called from the visitor's own browser (© OpenStreetMap contributors). */
 const OSM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
-const PLACE_CACHE = "skymate-places"
+const PLACE_CACHE = "skymate-places-v2"  // bumped when the name format changes, so old answers are dropped
 // Only the neighbourhood comes from OpenStreetMap; the city name stays SkyMate's own, because OSM's city field
 // varies by country ("Sabail Raion" for Baku, "Greater London" for London).
 const PARTS = ["suburb", "quarter", "neighbourhood", "village", "hamlet", "city_district"] as const
@@ -128,13 +128,18 @@ export async function exactPlace(lat: number, lon: number, city: string, signal?
   const cell = `${lat.toFixed(4)},${lon.toFixed(4)}|${city}`
   const cache = cachedPlaces()
   if (cache[cell]) return cache[cell]
-  const params = new URLSearchParams({
-    format: "jsonv2", lat: lat.toFixed(4), lon: lon.toFixed(4), zoom: "17", addressdetails: "1", "accept-language": "en",
-  })
-  try {
+  const ask = async (zoom: number) => {
+    const params = new URLSearchParams({
+      format: "jsonv2", lat: lat.toFixed(4), lon: lon.toFixed(4), zoom: String(zoom), addressdetails: "1",
+      "accept-language": "en",
+    })
     const res = await fetch(`${OSM_REVERSE}?${params}`, { signal: signal ?? AbortSignal.timeout(6000) })
-    if (!res.ok) return null
-    const address = (await res.json()).address as Record<string, string> | undefined
+    return res.ok ? ((await res.json()).address as Record<string, string> | undefined) : undefined
+  }
+  try {
+    let address = await ask(17)
+    // A spot away from any mapped road (inside a block or a park) gets one closer look
+    if (address && !address.road) address = (await ask(18)) ?? address
     if (!address) return null
     const small = neighbourhood(address, city)
     // Street first, then neighbourhood and city: "Muhammad Hadi Street, Ahmedli, Baku"
