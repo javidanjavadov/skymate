@@ -87,8 +87,9 @@ def lookup(lat: float, lon: float, city: str) -> dict | None:
     if address is None:
         return None  # temporary failure: not cached, try again next time
     small = _neighbourhood(address, city)
-    name = f"{small}, {city}" if small else ""
-    detail = " · ".join(v for v in (address.get("road"), address.get("postcode")) if v)
+    parts = [p for p in (address.get("road"), small, city) if p]
+    name = ", ".join(parts) if len(parts) > 1 else ""
+    detail = address.get("postcode") or ""
     country = (address.get("country_code") or "").upper()
     try:
         with store.tx("api") as c:

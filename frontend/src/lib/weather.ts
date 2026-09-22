@@ -137,10 +137,10 @@ export async function exactPlace(lat: number, lon: number, city: string, signal?
     const address = (await res.json()).address as Record<string, string> | undefined
     if (!address) return null
     const small = neighbourhood(address, city)
-    if (!small) return null
-    // Street and postcode make the answer exact, e.g. "Vung Tau Street · 1126"
-    const detail = [address.road, address.postcode].filter(Boolean).join(" · ")
-    const place = { name: `${small}, ${city}`, detail, country: (address.country_code ?? "").toUpperCase() }
+    // Street first, then neighbourhood and city: "Muhammad Hadi Street, Ahmedli, Baku"
+    const name = [address.road, small, city].filter(Boolean).join(", ")
+    if (name === city) return null  // nothing more exact than what SkyMate already knows
+    const place = { name, detail: address.postcode ?? "", country: (address.country_code ?? "").toUpperCase() }
     try {
       const entries = Object.entries({ ...cache, [cell]: place }).slice(-60)  // keep the cache small
       localStorage.setItem(PLACE_CACHE, JSON.stringify(Object.fromEntries(entries)))

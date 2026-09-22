@@ -33,7 +33,7 @@ def test_lookup_is_cached_and_identifies_skymate(monkeypatch):
     monkeypatch.setattr(places, "_last_request", 0.0)
     first = places.lookup(40.375612, 49.956821, "Baku")
     second = places.lookup(40.375588, 49.956799, "Baku")  # same ~10 m square
-    assert first == second == {"name": "Ahmedli, Baku", "country": "AZ", "detail": "Vung Tau Street · 1126"}
+    assert first == second == {"name": "Vung Tau Street, Ahmedli, Baku", "country": "AZ", "detail": "1126"}
     assert len(calls) == 1
     assert calls[0]["headers"]["User-Agent"].startswith("SkyMate/")
     assert calls[0]["params"]["lat"] == "40.3756"  # only the rounded position leaves SkyMate
@@ -49,7 +49,7 @@ def test_failed_lookup_is_not_cached(monkeypatch):
     monkeypatch.setattr(places, "_last_request", 0.0)
     assert places.lookup(10.123, 20.456, "Somewhere") is None
     monkeypatch.setattr(places.requests, "get", lambda url, **kw: FakeResponse({"suburb": "Later"}))
-    assert places.lookup(10.123, 20.456, "Somewhere")["name"] == "Later, Somewhere"
+    assert places.lookup(10.123, 20.456, "Somewhere")["name"] == "Later, Somewhere"  # no street mapped there
 
 
 def test_only_the_visitors_own_position_is_looked_up(monkeypatch):

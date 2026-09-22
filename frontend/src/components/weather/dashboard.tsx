@@ -389,7 +389,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
           <div className="flex flex-wrap items-start justify-between gap-2">
             <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-white/80">
               <MapPin aria-hidden="true" className="size-4 shrink-0" />
-              <span className="truncate" translate="no">{data.location.name}{data.location.country ? `, ${data.location.country}` : ""}</span>
+              <span className="min-w-0 text-pretty" translate="no">{data.location.name}{data.location.country ? `, ${data.location.country}` : ""}</span>
               {data.location.detail && (
                 <span className="basis-full pl-5 text-xs text-white/50" translate="no">{data.location.detail}</span>
               )}
