@@ -13,7 +13,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from . import forecast, geo, places, security
+from . import forecast, geo, lastknown, places, security
 
 WEB = Path(__file__).parent / "static" / "web"
 router = APIRouter(include_in_schema=False)
@@ -186,11 +186,18 @@ async def site_weather(request: Request, q: str | None = Query(None, min_length=
     if not q and (lat is None or lon is None):
         return JSONResponse({"error": "Enter a city name."}, status_code=400)
     try:
-        return await run_in_threadpool(_dashboard, q.strip() if q else None, lat, lon, precise)
+        place = lastknown.key(q, lat, lon)
+        dashboard = await run_in_threadpool(_dashboard, q.strip() if q else None, lat, lon, precise)
+        await run_in_threadpool(lastknown.save, place, dashboard)
+        return dashboard
     except forecast.NotFound:
         return JSONResponse({"error": "That place wasn't found. Check the spelling or add the country, e.g. “Paris, FR”."},
                             status_code=404)
     except forecast.NoData:
+        # Forecast files are still loading (they are rebuilt after every restart): serve the last good answer
+        stored = await run_in_threadpool(lastknown.load, lastknown.key(q, lat, lon))
+        if stored:
+            return stored
         return JSONResponse({"error": "Weather data is updating. Try again in a few minutes."}, status_code=503)
 
 

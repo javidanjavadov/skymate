@@ -404,6 +404,11 @@ export function WeatherDashboard({ data, units, search, onScene }: {
                 <RotateCcw aria-hidden="true" className="size-3.5" />
                 Back to Now
               </button>
+            ) : data.meta.stale ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/15 px-2.5 py-1 text-xs font-medium text-amber-100">
+                <RotateCcw aria-hidden="true" className="size-3.5" />
+                Updating · from {fmt.age(data.meta.stale_age_minutes ?? 0)}
+              </span>
             ) : data.measured ? (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-2.5 py-1 text-xs font-medium text-emerald-200">
                 <Radio aria-hidden="true" className="size-3.5" />

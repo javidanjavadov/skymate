@@ -15,7 +15,8 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import __version__, admin_panel, auth, db, forecast, geo, hosting, maps, observations, places, scheduler, security, site, store
+from . import (__version__, admin_panel, auth, db, forecast, geo, hosting, lastknown, maps, observations, places,
+               scheduler, security, site, store)
 
 log = logging.getLogger("skymate.server")
 STATIC = Path(__file__).parent / "static"
@@ -55,6 +56,8 @@ async def lifespan(_app: FastAPI):
     store.init("bot")
     security.init_audit()
     places.init()
+    lastknown.init()
+    lastknown.cleanup()
     try:
         await run_in_threadpool(geo.ensure_loaded)
     except Exception:

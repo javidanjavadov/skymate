@@ -31,3 +31,25 @@ def test_weather_endpoint_validates_input(client):
 def test_site_info_exposes_nothing_sensitive(client):
     info = client.get("/site/api/info").json()
     assert set(info) == {"bot", "premium_stars"}
+
+
+def test_last_known_weather_is_served_while_forecasts_reload(client, monkeypatch):
+    """A restart wipes the forecast files; the site answers with the last good dashboard instead of an error."""
+    from skymate_api import forecast, lastknown, site
+
+    lastknown.init()
+    real = {"location": {"name": "Baku", "country": "AZ", "timezone": "Asia/Baku", "lat": 40.4, "lon": 49.9},
+            "now": {"temperature": 24.0}, "meta": {"source": "gfs", "data_age_hours": 1.0}}
+    monkeypatch.setattr(site, "_dashboard", lambda *a, **kw: real)
+    assert client.get("/site/api/weather", params={"q": "Baku"}).json()["now"]["temperature"] == 24.0
+
+    def reloading(*a, **kw):
+        raise forecast.NoData("grids missing")
+
+    monkeypatch.setattr(site, "_dashboard", reloading)
+    r = client.get("/site/api/weather", params={"q": "Baku"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["now"]["temperature"] == 24.0 and body["meta"]["stale"] is True
+    # Somewhere never asked for before still reports honestly
+    assert client.get("/site/api/weather", params={"q": "Nowhere-at-all"}).status_code == 503

@@ -26,7 +26,8 @@ export interface Dashboard {
   hourly: Hour[]
   daily: Day[]
   alerts: { event: string; severity: "severe" | "moderate" | "minor"; start: string; end: string }[]
-  meta: { source: string; data_age_hours: number | null }
+  /** stale: forecast files are reloading after a restart, so this is the last good answer */
+  meta: { source: string; data_age_hours: number | null; stale?: boolean; made_at?: string; stale_age_minutes?: number }
 }
 
 export interface Hour {
