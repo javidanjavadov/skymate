@@ -7,11 +7,11 @@ import { LANGUAGES, setLanguage, useT } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 
 export const NAV = [
-  { href: "/#features", label: "Features" },
-  { href: "/#pricing", label: "Pricing" },
-  { href: "/#telegram", label: "Telegram Bot" },
-  { href: "/#developers", label: "Developers" },
-  { href: "/#faq", label: "FAQ" },
+  { href: "/#features", key: "nav.features" },
+  { href: "/#pricing", key: "nav.pricing" },
+  { href: "/#telegram", key: "nav.telegram" },
+  { href: "/#developers", key: "nav.developers" },
+  { href: "/#faq", key: "nav.faq" },
 ]
 
 export function Logo() {
@@ -49,6 +49,7 @@ export function Header({ units, setUnits, paused, setPaused, bot }: {
   setPaused: (p: boolean) => void
   bot: string
 }) {
+  const { t } = useT()
   const [open, setOpen] = useState(false)
   return (
     <header className="sticky top-0 z-40 border-b border-white/10 bg-slate-950/85 pt-[env(safe-area-inset-top)] backdrop-blur-sm">
@@ -58,13 +59,13 @@ export function Header({ units, setUnits, paused, setPaused, bot }: {
           {NAV.map((n) => (
             <a key={n.href} href={n.href}
               className="rounded-lg px-3 py-2 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-sky-300 outline-none">
-              {n.label}
+              {t(n.key as Parameters<typeof t>[0])}
             </a>
           ))}
         </nav>
         <div className="ml-auto flex items-center gap-2">
           <LanguagePicker />
-          <div role="group" aria-label="Units" className="flex rounded-full border border-white/15 bg-white/5 p-0.5">
+          <div role="group" aria-label={t("nav.units")} className="flex rounded-full border border-white/15 bg-white/5 p-0.5">
             {(["metric", "imperial"] as const).map((u) => (
               <button key={u} type="button" aria-pressed={units === u} onClick={() => setUnits(u)}
                 className={cn("rounded-full px-3 py-1 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
@@ -74,14 +75,14 @@ export function Header({ units, setUnits, paused, setPaused, bot }: {
             ))}
           </div>
           <Button type="button" size="icon" variant="ghost" onClick={() => setPaused(!paused)}
-            aria-label={paused ? "Play background animation" : "Pause background animation"} aria-pressed={paused}
+            aria-label={t(paused ? "nav.play" : "nav.pause")} aria-pressed={paused}
             className="hidden rounded-full text-white/80 hover:bg-white/10 hover:text-white sm:inline-flex">
             {paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}
           </Button>
           <Button asChild className="hidden rounded-full bg-sky-400 text-slate-950 hover:bg-sky-300 sm:inline-flex">
-            <a href={`https://t.me/${bot}`} rel="noopener noreferrer" target="_blank">Open in Telegram</a>
+            <a href={`https://t.me/${bot}`} rel="noopener noreferrer" target="_blank">{t("nav.open")}</a>
           </Button>
-          <Button type="button" size="icon" variant="ghost" aria-label={open ? "Close menu" : "Open menu"} aria-expanded={open}
+          <Button type="button" size="icon" variant="ghost" aria-label={t(open ? "nav.close" : "nav.menu")} aria-expanded={open}
             aria-controls="mobile-nav" onClick={() => setOpen(!open)}
             className="rounded-full text-white hover:bg-white/10 lg:hidden">
             {open ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
@@ -95,17 +96,17 @@ export function Header({ units, setUnits, paused, setPaused, bot }: {
               <li key={n.href}>
                 <a href={n.href} onClick={() => setOpen(false)}
                   className="block rounded-xl px-3 py-3 text-base text-white/85 hover:bg-white/10 outline-none focus-visible:ring-2 focus-visible:ring-sky-300">
-                  {n.label}
+                  {t(n.key as Parameters<typeof t>[0])}
                 </a>
               </li>
             ))}
             <li className="flex gap-2 pt-2 sm:hidden">
               <Button asChild className="flex-1 rounded-full bg-sky-400 text-slate-950 hover:bg-sky-300">
-                <a href={`https://t.me/${bot}`} rel="noopener noreferrer" target="_blank">Open in Telegram</a>
+                <a href={`https://t.me/${bot}`} rel="noopener noreferrer" target="_blank">{t("nav.open")}</a>
               </Button>
               <Button type="button" variant="outline" onClick={() => setPaused(!paused)} aria-pressed={paused}
                 className="rounded-full border-white/20 bg-transparent text-white hover:bg-white/10">
-                {paused ? "Play Animation" : "Pause Animation"}
+                {t(paused ? "nav.play" : "nav.pause")}
               </Button>
             </li>
           </ul>

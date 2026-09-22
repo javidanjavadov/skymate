@@ -493,7 +493,7 @@ function SunCard({ sun, tz, className }: { sun: Data["sun"]; tz: string; classNa
       </svg>
       <dl className="mt-1 flex items-end justify-between gap-2 text-sm">
         <div><dt className="text-white/55">{t("sun.sunrise")}</dt><dd className="text-lg font-medium tabular-nums text-white">{fmt.time(sun.sunrise, tz)}</dd></div>
-        <div className="text-center"><dt className="text-white/55">{t("sun.daylight")}</dt><dd className="tabular-nums text-white/85">{hours} h {mins} min</dd></div>
+        <div className="text-center"><dt className="text-white/55">{t("sun.daylight")}</dt><dd className="tabular-nums text-white/85">{t("time.hoursMinutes", { h: hours, m: mins })}</dd></div>
         <div className="text-right"><dt className="text-white/55">{t("sun.sunset")}</dt><dd className="text-lg font-medium tabular-nums text-white">{fmt.time(sun.sunset, tz)}</dd></div>
       </dl>
     </section>
