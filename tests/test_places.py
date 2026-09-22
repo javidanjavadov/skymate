@@ -33,7 +33,7 @@ def test_lookup_is_cached_and_identifies_skymate(monkeypatch):
     monkeypatch.setattr(places, "_last_request", 0.0)
     first = places.lookup(40.375612, 49.956821, "Baku")
     second = places.lookup(40.375588, 49.956799, "Baku")  # same ~10 m square
-    assert first == second == {"name": "Vung Tau Street, Ahmedli, Baku", "country": "AZ", "detail": "1126"}
+    assert first == second == {"name": "Vung Tau Street, Ahmedli, Baku", "country": "AZ", "detail": ""}
     assert len(calls) == 1
     assert calls[0]["headers"]["User-Agent"].startswith("SkyMate/")
     assert calls[0]["params"]["lat"] == "40.3756"  # only the rounded position leaves SkyMate

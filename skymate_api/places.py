@@ -89,7 +89,7 @@ def lookup(lat: float, lon: float, city: str) -> dict | None:
     small = _neighbourhood(address, city)
     parts = [p for p in (address.get("road"), small, city) if p]
     name = ", ".join(parts) if len(parts) > 1 else ""
-    detail = address.get("postcode") or ""
+    detail = ""  # the street is already part of the name; a postcode adds nothing for weather
     country = (address.get("country_code") or "").upper()
     try:
         with store.tx("api") as c:
