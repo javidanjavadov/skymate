@@ -4,18 +4,22 @@ The front end lives in /frontend (React + shadcn/ui + Magic UI) and is built int
 """
 import math
 import os
+import re
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from functools import lru_cache
+from html import escape
+from pathlib import Path as FilePath
 
 import pytz
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Path, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from . import forecast, geo, lastknown, places, security
+from . import db, forecast, geo, lastknown, places, security
 
-WEB = Path(__file__).parent / "static" / "web"
+WEB = FilePath(__file__).parent / "static" / "web"
 router = APIRouter(include_in_schema=False)
 demo_limiter = security.SlidingWindow(30, 60)
 places_limiter = security.SlidingWindow(90, 60)  # typing-as-you-search sends more, smaller requests
@@ -38,7 +42,85 @@ for _path in APP_PAGES:
 
 @router.get("/robots.txt")
 def robots():
-    return PlainTextResponse("User-agent: *\nAllow: /\nDisallow: /console-\nDisallow: /v1/\nDisallow: /site/\n")
+    return PlainTextResponse("User-agent: *\nAllow: /\nDisallow: /console-\nDisallow: /v1/\nDisallow: /site/\n"
+                             f"Sitemap: {PUBLIC_URL}/sitemap.xml\n")
+
+
+CITY_LIMIT = 200
+PUBLIC_URL = (os.environ.get("PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL")
+              or "https://skymate-thfc.onrender.com").rstrip("/")
+
+
+def _slug(name: str) -> str:
+    plain = unicodedata.normalize("NFKD", name.translate(geo._TRANSLIT)).encode("ascii", "ignore").decode()
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", plain.lower())).strip("-")
+
+
+@lru_cache(maxsize=1)
+def _sitemap_cities() -> list[dict]:
+    """Cities worth their own page: every larger place in Azerbaijan, then the biggest elsewhere."""
+    conn = db.connect()
+    rows = conn.execute("SELECT name, country, lat, lon, population FROM cities WHERE country = 'AZ' "
+                        "ORDER BY population DESC LIMIT 60").fetchall()
+    rows += conn.execute("SELECT name, country, lat, lon, population FROM cities WHERE country <> 'AZ' "
+                         "ORDER BY population DESC LIMIT ?", (CITY_LIMIT - 60,)).fetchall()
+    seen, out = set(), []
+    for r in rows:
+        slug = _slug(r["name"])
+        if slug and slug not in seen:
+            seen.add(slug)
+            out.append({"slug": slug, "name": r["name"], "country": r["country"]})
+    return out
+
+
+@lru_cache(maxsize=512)
+def _city_for(slug: str) -> dict | None:
+    for city in _sitemap_cities():
+        if city["slug"] == slug:
+            return city
+    hits = geo.search(slug.replace("-", " "), limit=1)
+    return {"slug": slug, "name": hits[0]["name"], "country": hits[0]["country"]} if hits else None
+
+
+def _tagged_index(title: str, description: str, url: str, heading: str) -> HTMLResponse:
+    """The same single-page app, with the tags search engines and chat apps read."""
+    index = WEB / "index.html"
+    if not index.exists():
+        return _index()
+    html = index.read_text(encoding="utf-8")
+    html = re.sub(r"<title>.*?</title>", f"<title>{escape(title)}</title>", html, count=1)
+    html = re.sub(r'(<meta name="description" content=")[^"]*(")', lambda m: m.group(1) + escape(description) + m.group(2), html, count=1)
+    html = re.sub(r'(<meta property="og:title" content=")[^"]*(")', lambda m: m.group(1) + escape(title) + m.group(2), html, count=1)
+    html = re.sub(r'(<meta property="og:description" content=")[^"]*(")', lambda m: m.group(1) + escape(description) + m.group(2), html, count=1)
+    html = re.sub(r'(<meta property="og:url" content=")[^"]*(")', lambda m: m.group(1) + escape(url) + m.group(2), html, count=1)
+    html = re.sub(r'(<link rel="canonical" href=")[^"]*(")', lambda m: m.group(1) + escape(url) + m.group(2), html, count=1)
+    html = html.replace("<noscript>", f"<noscript><h1>{escape(heading)}</h1>", 1)
+    return HTMLResponse(html, headers={"Cache-Control": "public, max-age=600"})
+
+
+@router.get("/weather/{slug}")
+def city_page(slug: str = Path(..., min_length=1, max_length=60, pattern=r"^[a-z0-9-]+$")):
+    city = _city_for(slug)
+    if not city:
+        raise HTTPException(status_code=404)
+    where = f"{city['name']}, {city['country']}" if city["country"] else city["name"]
+    return _tagged_index(
+        title=f"{city['name']} Weather — Live Measurements and 10-Day Forecast | SkyMate",
+        description=(f"Current weather in {where} from the nearest real weather station, plus hourly and 10-day "
+                     f"forecasts, warnings, UV and wind. Free, no sign-up."),
+        url=f"{PUBLIC_URL}/weather/{slug}",
+        heading=f"Weather in {where}")
+
+
+@router.get("/sitemap.xml")
+def sitemap():
+    pages = ["", "/terms", "/privacy"] + [f"/weather/{c['slug']}" for c in _sitemap_cities()]
+    urls = "".join(f"<url><loc>{PUBLIC_URL}{p}</loc><changefreq>hourly</changefreq>"
+                   f"<priority>{'1.0' if not p else '0.8' if p.startswith('/weather/') else '0.3'}</priority></url>"
+                   for p in pages)
+    xml = f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
+    return Response(xml, media_type="application/xml", headers={"Cache-Control": "public, max-age=86400"})
+
 
 
 @router.get("/site/api/info")
@@ -163,7 +245,10 @@ def _dashboard(q: str | None, lat: float | None, lon: float | None, precise: boo
             "uv_index": c.get("uv_index"),
         },
         "measured": {"station": obs["station"]["name"], "distance_km": obs["station"]["distance_km"],
-                     "age_minutes": obs["age_minutes"], "time": obs["time"]} if obs else None,
+                     "age_minutes": obs["age_minutes"], "time": obs["time"],
+                     # What the forecast model said for the same moment, so visitors can judge it themselves
+                     "model_temperature": c.get("temperature"),
+                     "station_temperature": obs.get("temperature")} if obs else None,
         "sun": cur.get("sun", {}),
         "precipitation": {"today_mm": rain_between(local_midnight.astimezone(timezone.utc), now),
                           "next_24h_mm": rain_between(now, now + timedelta(hours=24))},
@@ -172,7 +257,8 @@ def _dashboard(q: str | None, lat: float | None, lon: float | None, precise: boo
         "daily": daily_out,
         "alerts": [{"event": a["event"], "severity": a["severity"], "start": a["start"], "end": a["end"]}
                    for a in alerts[:3]],
-        "meta": {"source": cur["meta"].get("source"), "data_age_hours": cur["meta"].get("data_age_hours")},
+        "meta": {"source": cur["meta"].get("source"), "data_age_hours": cur["meta"].get("data_age_hours"),
+                 "model": cur["meta"].get("model"), "run": cur["meta"].get("run")},
     }
 
 

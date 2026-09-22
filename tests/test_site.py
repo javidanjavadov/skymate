@@ -50,6 +50,6 @@ def test_last_known_weather_is_served_while_forecasts_reload(client, monkeypatch
     r = client.get("/site/api/weather", params={"q": "Baku"})
     assert r.status_code == 200
     body = r.json()
-    assert body["now"]["temperature"] == 24.0 and body["meta"]["stale"] is True
+    assert body["now"]["temperature"] == 24.0 and body["meta"]["from_store"] is True
     # Somewhere never asked for before still reports honestly
     assert client.get("/site/api/weather", params={"q": "Nowhere-at-all"}).status_code == 503

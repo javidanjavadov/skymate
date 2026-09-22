@@ -57,8 +57,8 @@ def load(place: str) -> dict | None:
     if age_hours > MAX_AGE_HOURS:
         return None
     body = json.loads(row["body"])
-    body["meta"] = {**body.get("meta", {}), "stale": True, "made_at": made.isoformat().replace("+00:00", "Z"),
-                    "stale_age_minutes": round(age_hours * 60)}
+    body["meta"] = {**body.get("meta", {}), "from_store": True, "made_at": made.isoformat().replace("+00:00", "Z"),
+                    "stored_age_minutes": round(age_hours * 60)}
     return body
 
 

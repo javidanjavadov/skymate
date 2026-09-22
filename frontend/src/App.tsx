@@ -7,6 +7,7 @@ import { Header } from "@/components/site/header"
 import { Privacy, Terms } from "@/components/site/legal"
 import { DashboardSkeleton, SavedCities, SearchBar, WeatherDashboard } from "@/components/weather/dashboard"
 import { ForegroundRain, Sky, type SkyScene } from "@/components/weather/sky"
+import { getLanguage, translate } from "@/lib/i18n"
 import { exactPlace, fetchDashboard, WeatherError, type Dashboard, type Units } from "@/lib/weather"
 
 const DEFAULT_CITY = "Baku"
@@ -41,8 +42,12 @@ function store(key: string, value: string) {
 /** `gps` marks the visitor's own position: it is never written to the address bar. */
 type Query = { q?: string; lat?: number; lon?: number; gps?: boolean }
 
-/** A place from a shared link, or null when the address has none. */
+const CITY_PATH = /^\/weather\/([a-z0-9-]{1,60})$/
+
+/** A place from a shared link (/weather/baku or ?q=…), or null when the address has none. */
 function linkedQuery(): Query | null {
+  const city = CITY_PATH.exec(location.pathname)
+  if (city) return { q: city[1].replace(/-/g, " ") }
   const p = new URLSearchParams(location.search)
   const lat = Number(p.get("lat")), lon = Number(p.get("lon"))
   if (p.has("lat") && p.has("lon") && Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon }
@@ -86,6 +91,10 @@ function remember(query: Query, data: Dashboard) {
 
 function syncUrl(query: Query) {
   const url = new URL(location.href)
+  // Leaving a city page (/weather/baku) for another place: back to the plain address
+  if (CITY_PATH.test(url.pathname) && query.q?.replace(/\s+/g, "-").toLowerCase() !== CITY_PATH.exec(url.pathname)![1]) {
+    url.pathname = "/"
+  }
   for (const k of ["q", "lat", "lon"]) url.searchParams.delete(k)
   if (query.q && query.q !== DEFAULT_CITY) url.searchParams.set("q", query.q)
   if (!query.gps && query.lat !== undefined && query.lon !== undefined) {
@@ -122,7 +131,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
    * and the page switches to the visitor's own location only if they allow it. */
   const locate = useCallback((onEntry: boolean) => {
     if (!("geolocation" in navigator)) {
-      if (!onEntry) setError("Your browser can’t share your location. Search for your city instead.")
+      if (!onEntry) setError(translate(getLanguage(), "error.noGeolocation"))
       return
     }
     navigator.geolocation.getCurrentPosition(
@@ -131,7 +140,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
         // Skip the reload when the visitor is already looking at (almost) the same spot
         setQuery((q) => (onEntry && q.gps && queryKey(q) === queryKey(next) ? q : next))
       },
-      () => { if (!onEntry) setError("Location access was blocked. Allow it in your browser, or search for your city.") },
+      () => { if (!onEntry) setError(translate(getLanguage(), "error.locationBlocked")) },
       { timeout: 10_000, maximumAge: 600_000 },
     )
   }, [])
@@ -162,7 +171,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
       })
       .catch((e) => {
         if ((e as Error).name === "AbortError") return
-        setError(e instanceof WeatherError ? e.message : "Something went wrong. Try again in a moment.")
+        setError(e instanceof WeatherError ? e.message : translate(getLanguage(), "error.generic"))
       })
       .finally(() => { if (!ctrl.signal.aborted) setBusy(false) })
     return () => ctrl.abort()
@@ -205,7 +214,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
               {search}
               <button type="button" onClick={() => setQuery({ ...query })}
                 className="mt-3 rounded-full bg-white px-5 py-2 text-sm font-medium text-slate-900 outline-none hover:bg-sky-100 focus-visible:ring-2 focus-visible:ring-sky-300">
-                Try Again
+                {translate(getLanguage(), "error.retry")}
               </button>
             </div>
           ) : <DashboardSkeleton />

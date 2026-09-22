@@ -1,3 +1,5 @@
+import { getLanguage, localeOf, translate } from "@/lib/i18n"
+
 export type Condition = "Clear" | "Clouds" | "Rain" | "Drizzle" | "Thunderstorm" | "Snow" | "Mist" | "Fog"
 
 export interface Dashboard {
@@ -19,15 +21,16 @@ export interface Dashboard {
     is_day: boolean
     uv_index: number | null
   }
-  measured: { station: string; distance_km: number; age_minutes: number; time: string } | null
+  measured: { station: string; distance_km: number; age_minutes: number; time: string;
+    model_temperature?: number | null; station_temperature?: number | null } | null
   sun: { sunrise?: string | null; sunset?: string | null }
   precipitation: { today_mm: number; next_24h_mm: number }
   uv: { now: number | null; max_today: number | null; protect_until: string | null }
   hourly: Hour[]
   daily: Day[]
   alerts: { event: string; severity: "severe" | "moderate" | "minor"; start: string; end: string }[]
-  /** stale: forecast files are reloading after a restart, so this is the last good answer */
-  meta: { source: string; data_age_hours: number | null; stale?: boolean; made_at?: string; stale_age_minutes?: number }
+  /** from_store: forecast files are reloading after a restart, so this is the last good answer */
+  meta: { source: string; data_age_hours: number | null; model?: string; run?: string; from_store?: boolean; made_at?: string; stored_age_minutes?: number }
 }
 
 export interface Hour {
@@ -85,15 +88,13 @@ export async function fetchDashboard(query: { q?: string; lat?: number; lon?: nu
     } catch (e) {
       if (signal?.aborted) throw e
       if (attempt === 1) {
-        throw new WeatherError((e as Error).name === "TimeoutError"
-          ? "SkyMate is taking too long to respond. It may be starting up; try again in a minute."
-          : "Can’t reach SkyMate. Check your connection and try again.")
+        throw new WeatherError(say((e as Error).name === "TimeoutError" ? "error.slow" : "error.offline"))
       }
     }
   }
-  if (!res) throw new WeatherError("Can’t reach SkyMate. Check your connection and try again.")
+  if (!res) throw new WeatherError(say("error.offline"))
   const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new WeatherError(body.error ?? "Something went wrong. Try again in a moment.")
+  if (!res.ok) throw new WeatherError(body.error ?? say("error.generic"))
   return body as Dashboard
 }
 
@@ -188,7 +189,9 @@ export async function exactPlace(lat: number, lon: number, city: string, signal?
   }
 }
 
-const locale = typeof navigator !== "undefined" ? navigator.languages?.[0] ?? navigator.language : "en"
+/** Dates and numbers follow the chosen language, not only the browser's. */
+const loc = () => localeOf(getLanguage())
+const say = (key: Parameters<typeof translate>[1]) => translate(getLanguage(), key)
 
 export const fmt = {
   temp(c: number | null | undefined, u: Units) {
@@ -201,37 +204,37 @@ export const fmt = {
   speed(ms: number | null | undefined, u: Units) {
     if (ms == null) return { value: "–", unit: u === "imperial" ? "mph" : "km/h" }
     const v = u === "imperial" ? ms * 2.23694 : ms * 3.6
-    return { value: new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(v), unit: u === "imperial" ? "mph" : "km/h" }
+    return { value: new Intl.NumberFormat(loc(), { maximumFractionDigits: 0 }).format(v), unit: u === "imperial" ? "mph" : "km/h" }
   },
   distance(m: number | null | undefined, u: Units) {
     if (m == null) return "–"
     const v = u === "imperial" ? m / 1609.34 : m / 1000
     const unit = u === "imperial" ? "mi" : "km"
-    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: v < 10 ? 1 : 0 }).format(v)} ${unit}`
+    return `${new Intl.NumberFormat(loc(), { maximumFractionDigits: v < 10 ? 1 : 0 }).format(v)} ${unit}`
   },
   rain(mm: number | null | undefined, u: Units) {
     if (mm == null) return "–"
     const v = u === "imperial" ? mm / 25.4 : mm
     const unit = u === "imperial" ? "in" : "mm"
-    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: u === "imperial" ? 2 : 1 }).format(v)} ${unit}`
+    return `${new Intl.NumberFormat(loc(), { maximumFractionDigits: u === "imperial" ? 2 : 1 }).format(v)} ${unit}`
   },
   number(v: number, digits = 0) {
-    return new Intl.NumberFormat(locale, { maximumFractionDigits: digits }).format(v)
+    return new Intl.NumberFormat(loc(), { maximumFractionDigits: digits }).format(v)
   },
   time(iso: string, timeZone: string) {
-    return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(iso))
+    return new Intl.DateTimeFormat(loc(), { hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(iso))
   },
   hour(iso: string, timeZone: string) {
-    return new Intl.DateTimeFormat(locale, { hour: "numeric", timeZone }).format(new Date(iso))
+    return new Intl.DateTimeFormat(loc(), { hour: "numeric", timeZone }).format(new Date(iso))
   },
   weekday(date: string, timeZone: string) {
-    return new Intl.DateTimeFormat(locale, { weekday: "short", timeZone }).format(new Date(`${date}T12:00:00Z`))
+    return new Intl.DateTimeFormat(loc(), { weekday: "short", timeZone }).format(new Date(`${date}T12:00:00Z`))
   },
   dayMonth(date: string, timeZone: string) {
-    return new Intl.DateTimeFormat(locale, { day: "2-digit", month: "2-digit", timeZone }).format(new Date(`${date}T12:00:00Z`))
+    return new Intl.DateTimeFormat(loc(), { day: "2-digit", month: "2-digit", timeZone }).format(new Date(`${date}T12:00:00Z`))
   },
   age(minutes: number) {
-    const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" })
+    const rtf = new Intl.RelativeTimeFormat(loc(), { numeric: "auto" })
     return minutes < 90 ? rtf.format(-minutes, "minute") : rtf.format(-Math.round(minutes / 60), "hour")
   },
 }
@@ -308,10 +311,6 @@ export function compass(deg: number | null) {
   return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(deg / 45) % 8]
 }
 
-const regionNames = (() => {
-  try { return new Intl.DisplayNames([locale], { type: "region" }) } catch { return null }
-})()
-
 export function countryName(code: string) {
-  try { return (code && regionNames?.of(code.toUpperCase())) || code } catch { return code }
+  try { return (code && new Intl.DisplayNames([loc()], { type: "region" }).of(code.toUpperCase())) || code } catch { return code }
 }

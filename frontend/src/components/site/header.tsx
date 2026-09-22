@@ -3,6 +3,7 @@ import { Menu, Pause, Play, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import type { Units } from "@/lib/weather"
+import { LANGUAGES, setLanguage, useT } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 
 export const NAV = [
@@ -21,6 +22,25 @@ export function Logo() {
     </a>
   )
 }
+
+
+/** Language picker: English, Azerbaijani, Russian. */
+function LanguagePicker() {
+  const { t, language } = useT()
+  return (
+    <div role="group" aria-label={t("nav.language")} className="flex rounded-full border border-white/15 bg-white/5 p-0.5">
+      {LANGUAGES.map((l) => (
+        <button key={l.code} type="button" onClick={() => setLanguage(l.code)} aria-pressed={language === l.code}
+          title={l.label}
+          className={cn("rounded-full px-2.5 py-1 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
+            language === l.code ? "bg-white text-slate-900" : "text-white/70 hover:text-white")}>
+          {l.short}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 
 export function Header({ units, setUnits, paused, setPaused, bot }: {
   units: Units
@@ -43,6 +63,7 @@ export function Header({ units, setUnits, paused, setPaused, bot }: {
           ))}
         </nav>
         <div className="ml-auto flex items-center gap-2">
+          <LanguagePicker />
           <div role="group" aria-label="Units" className="flex rounded-full border border-white/15 bg-white/5 p-0.5">
             {(["metric", "imperial"] as const).map((u) => (
               <button key={u} type="button" aria-pressed={units === u} onClick={() => setUnits(u)}

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import {
-  AlertTriangle, CalendarDays, Clock, Droplet, Droplets, Eye, LocateFixed, MapPin, Radio, RotateCcw, Search, Star, Sun, Sunrise,
-  Thermometer, Wind,
+  AlertTriangle, CalendarDays, Clock, Droplet, Droplets, Eye, LocateFixed, MapPin, Radio, RotateCcw, Search, ShieldCheck,
+  Star, Sun, Sunrise, Thermometer, Wind,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { SkyScene } from "@/components/weather/sky"
 import { WeatherIcon } from "@/components/weather/weather-icon"
+import { useT } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 import {
   compass, countryName, daySummary, feelsNote, fmt, searchPlaces, summary, title, uvCategory,
@@ -42,6 +43,7 @@ export function SearchBar({ onSelect, onLocate, busy }: {
   onLocate: () => void
   busy: boolean
 }) {
+  const { t } = useT()
   const id = useId()
   const listId = `${id}-list`
   const [text, setText] = useState("")
@@ -87,7 +89,7 @@ export function SearchBar({ onSelect, onLocate, busy }: {
     >
       <div className="flex items-center gap-2 rounded-full border border-white/15 bg-slate-950/30 p-1.5 pl-4 focus-within:ring-2 focus-within:ring-sky-300/60">
         <MapPin aria-hidden="true" className="size-4 shrink-0 text-white/70" />
-        <label htmlFor={id} className="sr-only">Search for a city</label>
+        <label htmlFor={id} className="sr-only">{t("search.label")}</label>
         <Input
           ref={inputRef}
           id={id}
@@ -110,7 +112,7 @@ export function SearchBar({ onSelect, onLocate, busy }: {
           autoComplete="off"
           spellCheck={false}
           enterKeyHint="search"
-          placeholder="Search a city, e.g. Hanoi…"
+          placeholder={t("search.placeholder")}
           className="h-9 min-w-0 flex-1 border-0 bg-transparent px-0 text-[15px] text-white shadow-none placeholder:text-white/50 focus-visible:ring-0 dark:bg-transparent"
         />
         <Button
@@ -118,23 +120,23 @@ export function SearchBar({ onSelect, onLocate, busy }: {
           size="icon"
           variant="ghost"
           onClick={onLocate}
-          aria-label="Use my location"
-          title="Use my location"
+          aria-label={t("search.locate")}
+          title={t("search.locate")}
           className="size-9 shrink-0 rounded-full text-white/80 hover:bg-white/15 hover:text-white"
         >
           <LocateFixed aria-hidden="true" />
         </Button>
         <Button type="submit" disabled={busy || !places.length} className="h-9 shrink-0 rounded-full bg-white px-4 text-slate-900 hover:bg-sky-100">
           <Search aria-hidden="true" className="sm:hidden" />
-          <span className="max-sm:sr-only">{busy ? "Loading…" : "Search"}</span>
+          <span className="max-sm:sr-only">{busy ? t("search.loading") : t("search.button")}</span>
         </Button>
       </div>
 
-      <ul id={listId} role="listbox" aria-label="Matching places"
+      <ul id={listId} role="listbox" aria-label={t("search.list")}
         className={cn("absolute inset-x-0 top-full mt-2 overflow-hidden rounded-2xl border border-white/10 bg-slate-950/95 py-1.5 shadow-2xl",
           !showList && "hidden")}>
         {status === "none" && !places.length ? (
-          <li className="px-4 py-3 text-sm text-white/60">No matching places. Check the spelling.</li>
+          <li className="px-4 py-3 text-sm text-white/60">{t("search.none")}</li>
         ) : places.map((p, i) => (
           <li key={`${p.name}-${p.lat}-${p.lon}`} id={`${listId}-${i}`} role="option" aria-selected={i === active}
             onMouseDown={(e) => e.preventDefault()}
@@ -168,6 +170,7 @@ const sameSpot = (a: Saved, b: Saved) => Math.abs(a.lat - b.lat) < 0.05 && Math.
 
 /** Cities the visitor saved, for switching in one tap. Kept in their browser only. */
 export function SavedCities({ current, onSelect }: { current: Saved | null; onSelect: (place: Saved) => void }) {
+  const { t } = useT()
   const [saved, setSaved] = useState<Saved[]>(readSaved)
   const isSaved = current ? saved.some((s) => sameSpot(s, current)) : false
 
@@ -188,7 +191,7 @@ export function SavedCities({ current, onSelect }: { current: Saved | null; onSe
           className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
             isSaved ? "border-amber-300/40 bg-amber-300/15 text-amber-100" : "border-white/15 bg-slate-950/30 text-white/80 hover:bg-white/10")}>
           <Star aria-hidden="true" className={cn("size-4", isSaved && "fill-amber-200 text-amber-200")} />
-          {isSaved ? "Saved" : "Save this place"}
+          {isSaved ? t("saved.saved") : t("saved.save")}
         </button>
       )}
       {saved.map((place) => {
@@ -321,7 +324,7 @@ function buildView(data: Data, sel: Selection, units: Units): View {
       visibility: { value: fmt.distance(h.visibility, units), note: visibilityNote(h.visibility) },
       humidity: humidity(h.humidity, h.dew_point, "at this hour"),
       uv: { value: h.uv_index, note: (h.uv_index ?? 0) >= 3 ? "Use sun protection at this hour." : "No sun protection needed at this hour." },
-      wind: { speed: h.wind_speed, gust: h.wind_gust, direction: h.wind_direction, label: "Wind" },
+      wind: { speed: h.wind_speed, gust: h.wind_gust, direction: h.wind_direction, label: "wind" },
     }
   }
 
@@ -350,7 +353,7 @@ function buildView(data: Data, sel: Selection, units: Units): View {
           ? <>Peak {fmt.number(d.uv_max ?? 0)} ({uvCategory(d.uv_max ?? null)}). Use sun protection around midday.</>
           : "No sun protection needed.",
       },
-      wind: { speed: d.wind_max ?? null, gust: d.gust_max ?? null, direction: d.wind_direction ?? null, label: "Max Wind" },
+      wind: { speed: d.wind_max ?? null, gust: d.gust_max ?? null, direction: d.wind_direction ?? null, label: "windMax" },
     }
   }
 
@@ -378,7 +381,7 @@ function buildView(data: Data, sel: Selection, units: Units): View {
           ? <>Today’s peak: {fmt.number(data.uv.max_today ?? 0)} ({uvCategory(data.uv.max_today)}). Use sun protection around midday.</>
           : "No sun protection needed today.",
     },
-    wind: { speed: now.wind_speed, gust: now.wind_gust, direction: now.wind_direction, label: "Wind" },
+    wind: { speed: now.wind_speed, gust: now.wind_gust, direction: now.wind_direction, label: "wind" },
   }
 }
 
@@ -454,6 +457,7 @@ function HourlyChart({ hours, units, tz }: { hours: Hour[]; units: Units; tz: st
 
 /** Sunrise, sunset and where the day currently stands. */
 function SunCard({ sun, tz, className }: { sun: Data["sun"]; tz: string; className?: string }) {
+  const { t } = useT()
   const id = useId()
   if (!sun.sunrise || !sun.sunset) return null
   const rise = new Date(sun.sunrise).getTime(), set = new Date(sun.sunset).getTime(), now = Date.now()
@@ -467,7 +471,7 @@ function SunCard({ sun, tz, className }: { sun: Data["sun"]; tz: string; classNa
 
   return (
     <section aria-labelledby="sun-title" className={cn(card, "min-w-0 p-4 sm:p-5", className)}>
-      <CardTitle id="sun-title" icon={<Sunrise />}>Sun</CardTitle>
+      <CardTitle id="sun-title" icon={<Sunrise />}>{t("card.sun")}</CardTitle>
       <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 h-24 w-full" aria-hidden="true">
         <defs>
           <linearGradient id={`${id}-arc`} x1="0" y1="0" x2="1" y2="0">
@@ -482,10 +486,49 @@ function SunCard({ sun, tz, className }: { sun: Data["sun"]; tz: string; classNa
         {up && <circle cx={cx} cy={cy} r="7" fill="#fde68a" stroke="#fff7d6" strokeWidth="2" />}
       </svg>
       <dl className="mt-1 flex items-end justify-between gap-2 text-sm">
-        <div><dt className="text-white/55">Sunrise</dt><dd className="text-lg font-medium tabular-nums text-white">{fmt.time(sun.sunrise, tz)}</dd></div>
-        <div className="text-center"><dt className="text-white/55">Daylight</dt><dd className="tabular-nums text-white/85">{hours} h {mins} min</dd></div>
-        <div className="text-right"><dt className="text-white/55">Sunset</dt><dd className="text-lg font-medium tabular-nums text-white">{fmt.time(sun.sunset, tz)}</dd></div>
+        <div><dt className="text-white/55">{t("sun.sunrise")}</dt><dd className="text-lg font-medium tabular-nums text-white">{fmt.time(sun.sunrise, tz)}</dd></div>
+        <div className="text-center"><dt className="text-white/55">{t("sun.daylight")}</dt><dd className="tabular-nums text-white/85">{hours} h {mins} min</dd></div>
+        <div className="text-right"><dt className="text-white/55">{t("sun.sunset")}</dt><dd className="text-lg font-medium tabular-nums text-white">{fmt.time(sun.sunset, tz)}</dd></div>
       </dl>
+    </section>
+  )
+}
+
+/** Where the numbers come from, and how the forecast compares with the real reading. */
+function TrustPanel({ data, units }: { data: Data; units: Units }) {
+  const { t } = useT()
+  const m = data.measured
+  const model = m?.model_temperature, station = m?.station_temperature
+  const gap = model != null && station != null ? Math.abs(model - station) : null
+  const run = data.meta.run ? new Date(data.meta.run) : null
+  const rows: [string, ReactNode, string][] = [
+    m
+      ? [t("trust.measuredAt"), <><span translate="no">{m.station}</span>, {fmt.number(m.distance_km, 1)}&nbsp;km away</>,
+         `Reading from ${fmt.age(m.age_minutes)}`]
+      : [t("trust.measuredAt"), t("trust.noStation"), "Showing the forecast model instead"],
+    [t("trust.model"), (data.meta.model ?? "GFS").toUpperCase(),
+     run ? `Run of ${run.toISOString().slice(11, 16)} UTC, ${fmt.number(data.meta.data_age_hours ?? 0, 1)} h ago` : "Latest available run"],
+    gap != null
+      ? [t("trust.compare"), <>{fmt.temp(model, units)} — {fmt.temp(station, units)}</>,
+         gap < 1 ? `Off by ${fmt.number(gap, 1)}°, so SkyMate shows the station` : `Off by ${fmt.number(gap, 1)}° right now — the station wins`]
+      : ["What you see", "The station reading", "Forecast values only where no station covers you"],
+  ]
+  return (
+    <section aria-labelledby="trust-title" className={cn(card, "order-4 p-4 sm:p-5 lg:col-span-2")}>
+      <CardTitle id="trust-title" icon={<ShieldCheck />}>{t("card.trust")}</CardTitle>
+      <dl className="mt-3 grid gap-4 sm:grid-cols-3">
+        {rows.map(([label, value, note]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-xs uppercase tracking-wide text-white/45">{label}</dt>
+            <dd className="mt-1 text-[15px] font-medium text-white">{value}</dd>
+            <dd className="text-[13px] leading-snug text-white/55">{note}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-4 border-t border-white/10 pt-3 text-[13px] text-white/50">
+        Station measurements from airport (METAR) and national weather networks; forecasts from NOAA GFS and ECMWF open
+        data. SkyMate keeps its own copy of both. <a className="text-sky-300 underline-offset-4 hover:underline" href="/#measured">How it works</a>
+      </p>
     </section>
   )
 }
@@ -497,6 +540,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
   /** Called with the weather to show in the background: now, or the selected hour/day. */
   onScene?: (scene: SkyScene) => void
 }) {
+  const { t } = useT()
   const tz = data.location.timezone
   const [sel, setSel] = useState<Selection>({ kind: "now" })
   const [tab, setTab] = useState<"hourly" | "daily">("hourly")
@@ -547,27 +591,27 @@ export function WeatherDashboard({ data, units, search, onScene }: {
               <button type="button" onClick={() => setSel({ kind: "now" })}
                 className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white outline-none transition-colors hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-sky-300">
                 <RotateCcw aria-hidden="true" className="size-3.5" />
-                Back to Now
+                {t("now.back")}
               </button>
-            ) : data.meta.stale ? (
+            ) : data.meta.from_store ? (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/15 px-2.5 py-1 text-xs font-medium text-amber-100">
                 <RotateCcw aria-hidden="true" className="size-3.5" />
-                Updating · from {fmt.age(data.meta.stale_age_minutes ?? 0)}
+                {t("now.updating", { age: fmt.age(data.meta.stored_age_minutes ?? 0) })}
               </span>
             ) : data.measured ? (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-2.5 py-1 text-xs font-medium text-emerald-200">
                 <Radio aria-hidden="true" className="size-3.5" />
-                Measured {fmt.age(data.measured.age_minutes)}
+                {t("now.measured", { age: fmt.age(data.measured.age_minutes) })}
               </span>
             ) : (
-              <span className="rounded-full bg-sky-400/15 px-2.5 py-1 text-xs font-medium text-sky-200">Model estimate</span>
+              <span className="rounded-full bg-sky-400/15 px-2.5 py-1 text-xs font-medium text-sky-200">{t("now.model")}</span>
             )}
           </div>
 
           <div key={viewKey} className="mt-6 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-1 duration-300 sm:mt-8">
             <p className={cn("mb-3 rounded-full px-3 py-1 text-xs font-medium tracking-wide",
               view.heading ? "bg-sky-400/15 text-sky-100" : "invisible")}>
-              {view.heading ? <>{view.forecast ? "Forecast · " : ""}{view.heading}</> : "Now"}
+              {view.heading ? <>{view.forecast ? t("now.forecast") : ""}{view.heading}</> : t("now.badge")}
             </p>
             <WeatherIcon condition={view.condition} isDay={view.isDay} className="size-14 sm:size-16" />
             <p className="mt-2 text-[5.5rem] leading-none font-light tracking-tight text-white tabular-nums sm:text-[7rem]">
@@ -580,7 +624,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
             <p className="mt-4 max-w-md text-pretty text-sm leading-relaxed text-white/80 sm:text-[15px]">{view.summary}</p>
             {sel.kind === "now" && data.measured && (
               <p className="mt-3 text-xs text-white/55">
-                Temperature measured at <span translate="no">{data.measured.station}</span>, {fmt.number(data.measured.distance_km, 1)}&nbsp;km away
+                {t("now.station", { station: data.measured.station, km: fmt.number(data.measured.distance_km, 1) })}
               </p>
             )}
           </div>
@@ -602,21 +646,23 @@ export function WeatherDashboard({ data, units, search, onScene }: {
 
       {/* Detail tiles in one row across the dashboard (2×2 on phones, right under the summary) */}
       <div className="order-2 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:order-3 lg:col-span-2">
-        <Tile icon={<Thermometer />} label="Feels like" value={view.feels.value} note={view.feels.note} />
-        <Tile icon={<Droplet />} label="Precipitation" value={view.precip.value} note={view.precip.note} />
-        <Tile icon={<Eye />} label="Visibility" value={view.visibility.value} note={view.visibility.note} />
-        <Tile icon={<Droplets />} label="Humidity" value={view.humidity.value} note={view.humidity.note} />
+        <Tile icon={<Thermometer />} label={t("tile.feels")} value={view.feels.value} note={view.feels.note} />
+        <Tile icon={<Droplet />} label={t("tile.precip")} value={view.precip.value} note={view.precip.note} />
+        <Tile icon={<Eye />} label={t("tile.visibility")} value={view.visibility.value} note={view.visibility.note} />
+        <Tile icon={<Droplets />} label={t("tile.humidity")} value={view.humidity.value} note={view.humidity.note} />
       </div>
+
+      <TrustPanel data={data} units={units} />
 
       {/* Right column: hourly or 10-day (toggle), UV, wind. Choosing an hour or a day updates the summary. */}
       <div className="order-3 flex min-w-0 flex-col gap-4 lg:order-2">
         <section aria-label="Forecast" className={cn(card, "p-4 sm:p-5")}>
           <div className="flex items-center justify-between gap-3">
             <CardTitle id="forecast-title" icon={tab === "hourly" ? <Clock /> : <CalendarDays />}>
-              {tab === "hourly" ? "Hourly Forecast" : `${data.daily.length}-Day Forecast`}
+              {tab === "hourly" ? t("card.hourly") : t("card.daily", { n: data.daily.length })}
             </CardTitle>
             <div role="tablist" aria-label="Forecast range" className="flex shrink-0 rounded-full bg-white/10 p-1">
-              {([["hourly", "Hourly"], ["daily", `${data.daily.length} Days`]] as const).map(([key, label]) => (
+              {([["hourly", t("tab.hourly")], ["daily", t("tab.days", { n: data.daily.length })]] as const).map(([key, label]) => (
                 <button key={key} type="button" role="tab" id={`tab-${key}`} aria-selected={tab === key} aria-controls="forecast-panel"
                   onClick={() => setTab(key)}
                   className={cn("rounded-full px-3 py-1 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
@@ -666,7 +712,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
         <div className="grid flex-1 gap-4 sm:grid-cols-2">
           <SunCard sun={data.sun} tz={tz} className="sm:col-span-2" />
           <section aria-labelledby="uv-title" className={cn(card, "flex min-w-0 flex-col p-4 sm:p-5")}>
-            <CardTitle id="uv-title" icon={<Sun />}>{sel.kind === "day" ? "UV Index · Peak" : "UV Index"}</CardTitle>
+            <CardTitle id="uv-title" icon={<Sun />}>{sel.kind === "day" ? t("card.uvPeak") : t("card.uv")}</CardTitle>
             <p className="mt-4 text-4xl font-medium tabular-nums text-white">{view.uv.value == null ? "–" : fmt.number(view.uv.value, 0)}</p>
             <p className="text-lg text-white/90">{uvCategory(view.uv.value)}</p>
             <UvBar value={view.uv.value} />
@@ -674,15 +720,15 @@ export function WeatherDashboard({ data, units, search, onScene }: {
           </section>
 
           <section aria-labelledby="wind-title" className={cn(card, "min-w-0 p-4 sm:p-5")}>
-            <CardTitle id="wind-title" icon={<Wind />}>{view.wind.label}</CardTitle>
+            <CardTitle id="wind-title" icon={<Wind />}>{view.wind.label === "windMax" ? t("card.windMax") : t("card.wind")}</CardTitle>
             <div className="mt-3 flex items-center justify-between gap-3">
               <dl className="min-w-0 flex-1 divide-y divide-white/10">
                 <div className="flex items-baseline gap-2 pb-3">
-                  <dt className="order-2 text-sm leading-tight text-white/70"><span className="block uppercase">{wind.unit}</span>Wind</dt>
+                  <dt className="order-2 text-sm leading-tight text-white/70"><span className="block uppercase">{wind.unit}</span>{t("card.wind")}</dt>
                   <dd className="order-1 text-4xl font-medium tabular-nums text-white">{wind.value}</dd>
                 </div>
                 <div className="flex items-baseline gap-2 pt-3">
-                  <dt className="order-2 text-sm leading-tight text-white/70"><span className="block uppercase">{gust.unit}</span>Gusts</dt>
+                  <dt className="order-2 text-sm leading-tight text-white/70"><span className="block uppercase">{gust.unit}</span>{t("card.gusts")}</dt>
                   <dd className="order-1 text-4xl font-medium tabular-nums text-white">{gust.value}</dd>
                 </div>
               </dl>
