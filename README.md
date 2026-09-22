@@ -23,6 +23,7 @@ measurements, so it keeps answering from stored data when upstream sources are u
 | Live measurements | Airport METAR (NOAA AWC / NWS), national WMO SYNOP (Ogimet) | Public |
 | Historical measurements | NOAA Integrated Surface Database | Public domain |
 | Place names | GeoNames | CC BY 4.0 |
+| Neighbourhood of a visitor's own position | OpenStreetMap (Nominatim), cached per ~100 m in `place_names` | ODbL |
 | Air quality (live only) | Open-Meteo, OpenWeather fallback | Provider terms |
 
 Attribution is included in every API response and must be kept in customer-facing terms.

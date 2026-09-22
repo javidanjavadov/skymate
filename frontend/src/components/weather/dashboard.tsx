@@ -390,6 +390,10 @@ export function WeatherDashboard({ data, units, search, onScene }: {
             <p className="flex min-w-0 items-center gap-1.5 text-sm text-white/80">
               <MapPin aria-hidden="true" className="size-4 shrink-0" />
               <span className="truncate" translate="no">{data.location.name}{data.location.country ? `, ${data.location.country}` : ""}</span>
+              {data.location.name_source === "osm" && (
+                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer"
+                  className="shrink-0 text-[11px] text-white/45 underline-offset-2 hover:text-white/70 hover:underline">© OpenStreetMap</a>
+              )}
             </p>
             {sel.kind !== "now" ? (
               <button type="button" onClick={() => setSel({ kind: "now" })}

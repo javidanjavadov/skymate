@@ -13,7 +13,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from . import forecast, geo, security
+from . import forecast, geo, places, security
 
 WEB = Path(__file__).parent / "static" / "web"
 router = APIRouter(include_in_schema=False)
@@ -83,8 +83,13 @@ def _day_details(hourly: list[dict], tz) -> dict:
     return out
 
 
-def _dashboard(q: str | None, lat: float | None, lon: float | None) -> dict:
+def _dashboard(q: str | None, lat: float | None, lon: float | None, precise: bool = False) -> dict:
     loc = forecast.resolve_location(q, lat, lon)
+    source = "skymate"
+    if precise and q is None and lat is not None and lon is not None:
+        exact = places.lookup(lat, lon)  # the visitor's own position: name the neighbourhood, not just the city
+        if exact:
+            loc["name"], loc["country"], source = exact["name"], exact["country"] or loc.get("country", ""), "osm"
     cur = forecast.current(loc)
     hourly = forecast.hourly(loc, 240)["hourly"]
     daily = forecast.daily(loc, 10)["daily"]
@@ -139,7 +144,7 @@ def _dashboard(q: str | None, lat: float | None, lon: float | None) -> dict:
 
     return {
         "location": {"name": loc["name"], "country": loc.get("country", ""), "timezone": loc["timezone"],
-                     "lat": loc["lat"], "lon": loc["lon"]},
+                     "lat": loc["lat"], "lon": loc["lon"], "name_source": source},
         "now": {
             "temperature": measured("temperature"),
             "feels_like": c.get("feels_like"),
@@ -172,13 +177,15 @@ def _dashboard(q: str | None, lat: float | None, lon: float | None) -> dict:
 
 @router.get("/site/api/weather")
 async def site_weather(request: Request, q: str | None = Query(None, min_length=1, max_length=100),
-                       lat: float | None = Query(None, ge=-90, le=90), lon: float | None = Query(None, ge=-180, le=180)):
+                       lat: float | None = Query(None, ge=-90, le=90), lon: float | None = Query(None, ge=-180, le=180),
+                       precise: bool = False):
+    """precise=1 only for the visitor's own shared position: names the neighbourhood (OpenStreetMap, cached)."""
     if not demo_limiter.allow(security.client_ip(request)):
         return JSONResponse({"error": "Too many searches. Wait a minute, then try again."}, status_code=429)
     if not q and (lat is None or lon is None):
         return JSONResponse({"error": "Enter a city name."}, status_code=400)
     try:
-        return await run_in_threadpool(_dashboard, q.strip() if q else None, lat, lon)
+        return await run_in_threadpool(_dashboard, q.strip() if q else None, lat, lon, precise)
     except forecast.NotFound:
         return JSONResponse({"error": "That place wasn't found. Check the spelling or add the country, e.g. “Paris, FR”."},
                             status_code=404)

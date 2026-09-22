@@ -1,7 +1,8 @@
 export type Condition = "Clear" | "Clouds" | "Rain" | "Drizzle" | "Thunderstorm" | "Snow" | "Mist" | "Fog"
 
 export interface Dashboard {
-  location: { name: string; country: string; timezone: string; lat: number; lon: number }
+  /** name_source "osm": neighbourhood name from OpenStreetMap (needs attribution) */
+  location: { name: string; country: string; timezone: string; lat: number; lon: number; name_source?: "osm" | "skymate" }
   now: {
     temperature: number | null
     feels_like: number | null
@@ -67,12 +68,13 @@ export type Units = "metric" | "imperial"
 
 export class WeatherError extends Error {}
 
-export async function fetchDashboard(query: { q?: string; lat?: number; lon?: number }, signal?: AbortSignal) {
+export async function fetchDashboard(query: { q?: string; lat?: number; lon?: number; gps?: boolean }, signal?: AbortSignal) {
   const params = new URLSearchParams()
   if (query.q) params.set("q", query.q)
   if (query.lat !== undefined && query.lon !== undefined) {
     params.set("lat", query.lat.toFixed(4))
     params.set("lon", query.lon.toFixed(4))
+    if (query.gps) params.set("precise", "1")  // the visitor's own position: name the neighbourhood
   }
   let res: Response | undefined
   for (let attempt = 0; attempt < 2 && !res; attempt++) {
