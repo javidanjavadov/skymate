@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import {
-  AlertTriangle, CalendarDays, Clock, Droplet, Droplets, Eye, LocateFixed, MapPin, Radio, RotateCcw, Search, ShieldCheck,
+  AlertTriangle, CalendarDays, Check, Clock, Droplet, Droplets, Eye, LocateFixed, MapPin, Radio, RotateCcw, Search,
+  ShieldCheck,
   Star, Sun, Sunrise, Thermometer, Wind,
 } from "lucide-react"
 
@@ -198,8 +199,11 @@ export function SavedCities({ current, onSelect }: { current: Saved | null; onSe
         const active = current ? sameSpot(place, current) : false
         return (
           <button key={`${place.name}-${place.lat}`} type="button" onClick={() => onSelect(place)} aria-current={active || undefined}
-            className={cn("rounded-full border px-3 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
-              active ? "border-white bg-white text-slate-900" : "border-white/20 bg-slate-950/70 text-white hover:bg-slate-950/85")}>
+            className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
+              active
+                ? "border-sky-300 bg-sky-400 text-slate-950 shadow-[0_0_0_3px_rgb(56_189_248/0.25)]"
+                : "border-white/20 bg-slate-950/70 text-white hover:bg-slate-950/85")}>
+            {active && <Check aria-hidden="true" className="size-3.5" />}
             <span translate="no">{place.name}</span>
           </button>
         )
