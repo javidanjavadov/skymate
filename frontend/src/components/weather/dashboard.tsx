@@ -183,12 +183,12 @@ export function SavedCities({ current, units, onSelect }: {
         const now = brief[`${place.lat.toFixed(3)},${place.lon.toFixed(3)}`]
         return (
           <div key={`${place.name}-${place.lat}`}
-            className={cn("group relative flex w-[8.5rem] shrink-0 items-center gap-2 rounded-2xl border px-3 py-2 transition-colors",
-              active ? "border-sky-300/70 bg-sky-400/15" : "border-white/12 bg-slate-950/60 hover:bg-slate-950/75")}>
+            className={cn("group relative flex w-[8.5rem] shrink-0 items-center gap-2 rounded-2xl border px-3 py-2 shadow-[0_8px_24px_-12px_rgb(0_0_0/0.8)] transition-colors",
+              active ? "border-sky-300 bg-sky-700/95 ring-1 ring-sky-300/60" : "border-white/15 bg-slate-950/80 hover:bg-slate-950/90")}>
             <button type="button" onClick={() => onSelect(place)} aria-current={active || undefined}
               className="flex min-w-0 flex-1 items-center gap-2 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-sky-300">
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-medium text-white" translate="no">{place.name}</span>
+                <span className="block truncate pr-4 text-[13px] font-medium text-white/90" translate="no">{place.name}</span>
                 <span className="block text-lg font-semibold tabular-nums text-white">
                   {now?.temperature != null ? fmt.temp(now.temperature, units) : "…"}
                 </span>
@@ -196,7 +196,7 @@ export function SavedCities({ current, units, onSelect }: {
               {now?.condition && <WeatherIcon condition={now.condition} isDay={now.is_day} className="size-7 shrink-0" />}
             </button>
             <button type="button" onClick={() => removeSaved(place)} aria-label={t("saved.remove", { name: place.name })}
-              className="absolute right-1 top-1 rounded-lg p-1 text-white/0 outline-none transition-colors hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:text-white group-hover:text-white/50">
+              className="absolute right-1 top-1 rounded-lg p-1 text-white/45 outline-none transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:text-white">
               <X aria-hidden="true" className="size-3.5" />
             </button>
           </div>
