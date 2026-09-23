@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import {
-  AlertTriangle, CalendarDays, Check, Clock, Droplet, Droplets, Eye, LocateFixed, MapPin, Radio, RotateCcw, Search,
+  AlertTriangle, CalendarDays, Clock, Droplet, Droplets, Eye, LocateFixed, MapPin, Radio, RotateCcw, Search,
   ShieldCheck,
-  Star, Sun, Sunrise, Thermometer, Wind,
+  Star, Sun, Sunrise, Thermometer, Wind, X,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import type { SkyScene } from "@/components/weather/sky"
 import { WeatherIcon } from "@/components/weather/weather-icon"
 import { getLanguage, localeOf, translate, useT } from "@/lib/i18n"
+import { isSaved, removeSaved, samePlace, toggleSaved, useSavedPlaces, type Saved } from "@/lib/saved-places"
 import { cn } from "@/lib/utils"
 import {
   alertName, compass, countryName, daySummary, feelsNote, fmt, searchPlaces, summary, title, uvCategory,
@@ -154,61 +155,33 @@ export function SearchBar({ onSelect, onLocate, busy }: {
   )
 }
 
-export type Saved = { name: string; country: string; lat: number; lon: number }
-
-const SAVED_KEY = "skymate-saved"
-
-function readSaved(): Saved[] {
-  try {
-    const list = JSON.parse(localStorage.getItem(SAVED_KEY) ?? "[]")
-    return Array.isArray(list) ? list.slice(0, 8) : []
-  } catch {
-    return []
-  }
-}
-
-const sameSpot = (a: Saved, b: Saved) => Math.abs(a.lat - b.lat) < 0.05 && Math.abs(a.lon - b.lon) < 0.05
-
-/** Cities the visitor saved, for switching in one tap. Kept in their browser only. */
+/** The places the visitor saved, as a row of tabs. Empty until they save the first one. */
 export function SavedCities({ current, onSelect }: { current: Saved | null; onSelect: (place: Saved) => void }) {
   const { t } = useT()
-  const [saved, setSaved] = useState<Saved[]>(readSaved)
-  const isSaved = current ? saved.some((s) => sameSpot(s, current)) : false
-
-  const write = (list: Saved[]) => {
-    setSaved(list)
-    try { localStorage.setItem(SAVED_KEY, JSON.stringify(list)) } catch { /* storage unavailable */ }
-  }
-  const toggle = () => {
-    if (!current) return
-    write(isSaved ? saved.filter((s) => !sameSpot(s, current)) : [current, ...saved].slice(0, 8))
-  }
-
-  if (!current && !saved.length) return null
+  const saved = useSavedPlaces()
+  if (!saved.length) return null
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2">
-      {current && (
-        <button type="button" onClick={toggle} aria-pressed={isSaved}
-          className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
-            isSaved ? "border-amber-200/60 bg-amber-300/25 text-amber-50" : "border-white/20 bg-slate-950/70 text-white hover:bg-slate-950/85")}>
-          <Star aria-hidden="true" className={cn("size-4", isSaved && "fill-amber-200 text-amber-200")} />
-          {isSaved ? t("saved.saved") : t("saved.save")}
-        </button>
-      )}
+    <nav aria-label={t("saved.title")}
+      className="scroll-row mt-2 flex items-center gap-1 overflow-x-auto rounded-2xl border border-white/12 bg-slate-950/60 p-1">
       {saved.map((place) => {
-        const active = current ? sameSpot(place, current) : false
+        const active = !!current && samePlace(place, current)
         return (
-          <button key={`${place.name}-${place.lat}`} type="button" onClick={() => onSelect(place)} aria-current={active || undefined}
-            className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
-              active
-                ? "border-sky-300 bg-sky-400 text-slate-950 shadow-[0_0_0_3px_rgb(56_189_248/0.25)]"
-                : "border-white/20 bg-slate-950/70 text-white hover:bg-slate-950/85")}>
-            {active && <Check aria-hidden="true" className="size-3.5" />}
-            <span translate="no">{place.name}</span>
-          </button>
+          <span key={`${place.name}-${place.lat}`}
+            className={cn("group inline-flex shrink-0 items-center rounded-xl transition-colors",
+              active ? "bg-white text-slate-900" : "text-white/85 hover:bg-white/10")}>
+            <button type="button" onClick={() => onSelect(place)} aria-current={active || undefined}
+              className="rounded-xl py-1.5 pl-3 pr-1.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-sky-300">
+              <span translate="no">{place.name}</span>
+            </button>
+            <button type="button" onClick={() => removeSaved(place)} aria-label={t("saved.remove", { name: place.name })}
+              className={cn("mr-1 rounded-lg p-1 outline-none focus-visible:ring-2 focus-visible:ring-sky-300",
+                active ? "text-slate-500 hover:bg-slate-900/10 hover:text-slate-900" : "text-white/45 hover:bg-white/10 hover:text-white")}>
+              <X aria-hidden="true" className="size-3.5" />
+            </button>
+          </span>
         )
       })}
-    </div>
+    </nav>
   )
 }
 
@@ -560,6 +533,8 @@ export function WeatherDashboard({ data, units, search, onScene }: {
   const view = buildView(data, sel, units)
   const wind = fmt.speed(view.wind.speed, units)
   const gust = fmt.speed(view.wind.gust, units)
+  const here: Saved = { name: data.location.name, country: data.location.country, lat: data.location.lat, lon: data.location.lon }
+  const saved = isSaved(useSavedPlaces(), here)
   const viewKey = sel.kind === "now" ? "now" : `${sel.kind}-${sel.index}`
 
   useEffect(() => {
@@ -592,6 +567,12 @@ export function WeatherDashboard({ data, units, search, onScene }: {
               {data.location.detail && (
                 <span className="basis-full pl-5 text-xs text-white/50" translate="no">{data.location.detail}</span>
               )}
+              <button type="button" onClick={() => toggleSaved(here)} aria-pressed={saved}
+                title={t(saved ? "saved.added" : "saved.add")} aria-label={t(saved ? "saved.added" : "saved.add")}
+                className={cn("-my-1 shrink-0 rounded-full p-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
+                  saved ? "text-amber-300 hover:text-amber-200" : "text-white/50 hover:text-white")}>
+                <Star aria-hidden="true" className={cn("size-4", saved && "fill-amber-300")} />
+              </button>
               {data.location.name_source === "osm" && (
                 <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer"
                   className="shrink-0 text-[11px] text-white/45 underline-offset-2 hover:text-white/70 hover:underline">© OpenStreetMap contributors</a>

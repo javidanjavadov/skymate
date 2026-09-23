@@ -26,7 +26,6 @@ function detect(): Language {
 }
 
 let current: Language = typeof window === "undefined" ? "en" : detect()
-if (typeof document !== "undefined") document.documentElement.lang = current  // the page says which language it is
 const listeners = new Set<() => void>()
 
 export function setLanguage(code: Language) {
@@ -402,6 +401,10 @@ const en = {
   "privacy.9.body": "Send /paysupport to {bot}.",
   "page.title": "{city} Weather — SkyMate",
   "page.noscript": "SkyMate needs JavaScript to show live weather. You can also use the Telegram bot @skymatee_bot.",
+  "saved.title": "Saved places",
+  "saved.remove": "Remove {name}",
+  "saved.add": "Save this place",
+  "saved.added": "Saved — tap to remove",
 }
 
 const az: Record<Key, string> = {
@@ -756,6 +759,10 @@ const az: Record<Key, string> = {
   "privacy.9.body": "{bot} botuna /paysupport göndərin.",
   "page.title": "{city} hava — SkyMate",
   "page.noscript": "Canlı havanı göstərmək üçün SkyMate-ə JavaScript lazımdır. Telegram botundan da istifadə edə bilərsiniz: @skymatee_bot.",
+  "saved.title": "Yadda saxlanılan yerlər",
+  "saved.remove": "{name} yerini sil",
+  "saved.add": "Bu yeri yadda saxla",
+  "saved.added": "Saxlanıldı — silmək üçün toxunun",
 }
 
 const ru: Record<Key, string> = {
@@ -1110,6 +1117,10 @@ const ru: Record<Key, string> = {
   "privacy.9.body": "Отправьте /paysupport боту {bot}.",
   "page.title": "Погода в {city} — SkyMate",
   "page.noscript": "Для показа погоды SkyMate нужен JavaScript. Также можно использовать Telegram-бот @skymatee_bot.",
+  "saved.title": "Сохранённые места",
+  "saved.remove": "Удалить {name}",
+  "saved.add": "Сохранить это место",
+  "saved.added": "Сохранено — нажмите, чтобы удалить",
 }
 
 export type Key = keyof typeof en
