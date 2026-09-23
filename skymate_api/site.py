@@ -28,12 +28,63 @@ BOT_USERNAME = os.environ.get("BOT_USERNAME", "skymatee_bot")
 APP_PAGES = ("/", "/terms", "/privacy")
 
 
-def _index() -> HTMLResponse:
+# ── Page wording per language ────────────────────────────────────────────────
+# The app itself translates everything once it starts; these are the tags a crawler or chat app reads first.
+PAGE_TEXT = {
+    "en": {
+        "home_title": "SkyMate — Weather You Can Trust",
+        "home_description": ("Live weather from real station measurements: the nearest station reading, hourly and "
+                             "10-day forecasts, severe-weather warnings, UV and wind. Free on the web, in Telegram "
+                             "and via API."),
+        "city_title": "{city} Weather — Live Measurements and 10-Day Forecast | SkyMate",
+        "city_description": ("Current weather in {where} from the nearest real weather station, plus hourly and "
+                             "10-day forecasts, warnings, UV and wind. Free, no sign-up."),
+        "city_heading": "Weather in {where}",
+        "noscript": "SkyMate needs JavaScript to show live weather. You can also use the Telegram bot @{bot}.",
+    },
+    "az": {
+        "home_title": "SkyMate — Etibar edə biləcəyiniz hava",
+        "home_description": ("Real stansiya ölçmələri ilə canlı hava: ən yaxın stansiyanın göstəricisi, saatlıq və "
+                             "10 günlük proqnoz, təhlükəli hava xəbərdarlıqları, UV və külək. Saytda, Telegram-da "
+                             "və API ilə pulsuz."),
+        "city_title": "{city} hava — canlı ölçmələr və 10 günlük proqnoz | SkyMate",
+        "city_description": ("{where} üçün ən yaxın real meteostansiyadan indiki hava, saatlıq və 10 günlük proqnoz, "
+                             "xəbərdarlıqlar, UV və külək. Pulsuz, qeydiyyatsız."),
+        "city_heading": "{where} üçün hava",
+        "noscript": "Canlı havanı göstərmək üçün SkyMate-ə JavaScript lazımdır. Telegram botundan da istifadə edə bilərsiniz: @{bot}.",
+    },
+    "ru": {
+        "home_title": "SkyMate — погода, которой можно доверять",
+        "home_description": ("Погода по реальным измерениям станций: показание ближайшей станции, почасовой и "
+                             "10-дневный прогноз, предупреждения о непогоде, УФ и ветер. Бесплатно на сайте, "
+                             "в Telegram и через API."),
+        "city_title": "Погода в {city} — реальные измерения и прогноз на 10 дней | SkyMate",
+        "city_description": ("Текущая погода в {where} с ближайшей реальной метеостанции, почасовой и 10-дневный "
+                             "прогноз, предупреждения, УФ и ветер. Бесплатно, без регистрации."),
+        "city_heading": "Погода в {where}",
+        "noscript": "Для показа погоды SkyMate нужен JavaScript. Также можно использовать Telegram-бот @{bot}.",
+    },
+}
+
+
+def _language(request: Request) -> str:
+    """First supported language from the browser's Accept-Language header."""
+    header = (request.headers.get("accept-language") or "").lower()
+    for part in header.split(","):
+        code = part.split(";")[0].strip()[:2]
+        if code in PAGE_TEXT:
+            return code
+    return "en"
+
+
+def _index(request: Request) -> HTMLResponse:
     index = WEB / "index.html"
     if not index.exists():
         return HTMLResponse("<h1>SkyMate</h1><p>Website build missing. Run <code>npm run build</code> in /frontend.</p>",
                             status_code=503)
-    return HTMLResponse(index.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+    text = PAGE_TEXT[_language(request)]
+    return _with_tags(index.read_text(encoding="utf-8"), text["home_title"], text["home_description"],
+                      f"{PUBLIC_URL}/", "", _language(request), text["noscript"].format(bot=BOT_USERNAME), "no-cache")
 
 
 for _path in APP_PAGES:
@@ -82,34 +133,37 @@ def _city_for(slug: str) -> dict | None:
     return {"slug": slug, "name": hits[0]["name"], "country": hits[0]["country"]} if hits else None
 
 
-def _tagged_index(title: str, description: str, url: str, heading: str) -> HTMLResponse:
+def _with_tags(html: str, title: str, description: str, url: str, heading: str, language: str, noscript: str,
+               cache: str) -> HTMLResponse:
     """The same single-page app, with the tags search engines and chat apps read."""
-    index = WEB / "index.html"
-    if not index.exists():
-        return _index()
-    html = index.read_text(encoding="utf-8")
     html = re.sub(r"<title>.*?</title>", f"<title>{escape(title)}</title>", html, count=1)
     html = re.sub(r'(<meta name="description" content=")[^"]*(")', lambda m: m.group(1) + escape(description) + m.group(2), html, count=1)
     html = re.sub(r'(<meta property="og:title" content=")[^"]*(")', lambda m: m.group(1) + escape(title) + m.group(2), html, count=1)
     html = re.sub(r'(<meta property="og:description" content=")[^"]*(")', lambda m: m.group(1) + escape(description) + m.group(2), html, count=1)
     html = re.sub(r'(<meta property="og:url" content=")[^"]*(")', lambda m: m.group(1) + escape(url) + m.group(2), html, count=1)
     html = re.sub(r'(<link rel="canonical" href=")[^"]*(")', lambda m: m.group(1) + escape(url) + m.group(2), html, count=1)
-    html = html.replace("<noscript>", f"<noscript><h1>{escape(heading)}</h1>", 1)
-    return HTMLResponse(html, headers={"Cache-Control": "public, max-age=600"})
+    html = re.sub(r'<html lang="[a-z-]+"', f'<html lang="{language}"', html, count=1)
+    html = re.sub(r"<noscript>.*?</noscript>", f"<noscript>{f'<h1>{escape(heading)}</h1>' if heading else ''}"
+                  f"{escape(noscript)}</noscript>", html, count=1, flags=re.S)
+    return HTMLResponse(html, headers={"Cache-Control": cache})
 
 
 @router.get("/weather/{slug}")
-def city_page(slug: str = Path(..., min_length=1, max_length=60, pattern=r"^[a-z0-9-]+$")):
+def city_page(request: Request, slug: str = Path(..., min_length=1, max_length=60, pattern=r"^[a-z0-9-]+$")):
     city = _city_for(slug)
     if not city:
         raise HTTPException(status_code=404)
+    index = WEB / "index.html"
+    if not index.exists():
+        return _index(request)
     where = f"{city['name']}, {city['country']}" if city["country"] else city["name"]
-    return _tagged_index(
-        title=f"{city['name']} Weather — Live Measurements and 10-Day Forecast | SkyMate",
-        description=(f"Current weather in {where} from the nearest real weather station, plus hourly and 10-day "
-                     f"forecasts, warnings, UV and wind. Free, no sign-up."),
-        url=f"{PUBLIC_URL}/weather/{slug}",
-        heading=f"Weather in {where}")
+    language = _language(request)
+    text = PAGE_TEXT[language]
+    return _with_tags(index.read_text(encoding="utf-8"),
+                      text["city_title"].format(city=city["name"], where=where),
+                      text["city_description"].format(city=city["name"], where=where),
+                      f"{PUBLIC_URL}/weather/{slug}", text["city_heading"].format(where=where), language,
+                      text["noscript"].format(bot=BOT_USERNAME), "public, max-age=600")
 
 
 @router.get("/sitemap.xml")

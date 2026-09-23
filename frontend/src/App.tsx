@@ -167,7 +167,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
         if (query.gps && d.location.name_source !== "osm") nameNeighbourhood(query, d, ctrl.signal)
         setCondition({ condition: d.now.condition, isDay: d.now.is_day, cloudCover: d.now.cloud_cover })
         syncUrl(query)
-        document.title = `${d.location.name} Weather — SkyMate`
+        document.title = translate(getLanguage(), "page.title", { city: d.location.name })
       })
       .catch((e) => {
         if ((e as Error).name === "AbortError") return
@@ -185,7 +185,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
       country: place.country || d.location.country, name_source: "osm" } }
     setData((prev) => (prev === d ? named : prev))
     remember(q, named)
-    document.title = `${named.location.name} Weather — SkyMate`
+    document.title = translate(getLanguage(), "page.title", { city: named.location.name })
   }, [])
 
   useEffect(() => { if (error) errorRef.current?.focus() }, [error])
