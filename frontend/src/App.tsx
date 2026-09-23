@@ -39,8 +39,12 @@ function store(key: string, value: string) {
   }
 }
 
-/** `gps` marks the visitor's own position: it is never written to the address bar. */
-type Query = { q?: string; lat?: number; lon?: number; gps?: boolean }
+/**
+ * `gps` marks the visitor's own position: it is never written to the address bar.
+ * `label` is the name the visitor actually picked (a search result or a saved place), which is kept as shown:
+ * coordinates alone would be named after the nearest city, turning "Budapest XI. kerület" into "Budapest".
+ */
+type Query = { q?: string; lat?: number; lon?: number; gps?: boolean; label?: string }
 
 const CITY_PATH = /^\/weather\/([a-z0-9-]{1,60})$/
 
@@ -136,7 +140,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
     }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const next = { lat: pos.coords.latitude, lon: pos.coords.longitude, gps: true }
+        const next: Query = { lat: pos.coords.latitude, lon: pos.coords.longitude, gps: true }
         // Skip the reload when the visitor is already looking at (almost) the same spot
         setQuery((q) => (onEntry && q.gps && queryKey(q) === queryKey(next) ? q : next))
       },
@@ -161,10 +165,12 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
     setBusy(true)
     setError(null)
     fetchDashboard(query, ctrl.signal)
-      .then((d) => {
+      .then((fresh) => {
+        // Keep the name the visitor chose, not the nearest city the coordinates resolve to
+        const d = query.label ? { ...fresh, location: { ...fresh.location, name: query.label } } : fresh
         setData(d)
         remember(query, d)
-        if (query.gps && d.location.name_source !== "osm") nameNeighbourhood(query, d, ctrl.signal)
+        if (query.gps && !query.label && d.location.name_source !== "osm") nameNeighbourhood(query, d, ctrl.signal)
         setCondition({ condition: d.now.condition, isDay: d.now.is_day, cloudCover: d.now.cloud_cover })
         syncUrl(query)
         document.title = translate(getLanguage(), "page.title", { city: d.location.name })
@@ -192,10 +198,10 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
 
   const search = (
     <div>
-      <SearchBar busy={busy} onSelect={(p) => setQuery({ lat: p.lat, lon: p.lon })} onLocate={() => locate(false)} />
+      <SearchBar busy={busy} onSelect={(p) => setQuery({ lat: p.lat, lon: p.lon, label: p.name })} onLocate={() => locate(false)} />
       <SavedCities
         current={data ? { name: data.location.name, country: data.location.country, lat: data.location.lat, lon: data.location.lon } : null}
-        onSelect={(p) => setQuery({ lat: p.lat, lon: p.lon })}
+        onSelect={(p) => setQuery({ lat: p.lat, lon: p.lon, label: p.name })}
       />
       <p ref={errorRef} tabIndex={-1} role="alert" aria-live="polite"
         className={error ? "mt-2 rounded-xl bg-red-500/15 px-3 py-2 text-sm text-red-100 outline-none" : "sr-only"}>
