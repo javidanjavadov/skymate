@@ -580,7 +580,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
       <div className="order-1 flex min-w-0 flex-col gap-4">
         {search}
         <section ref={heroRef} aria-labelledby="now-title" aria-live="polite"
-          className={cn(card, "relative flex-1 scroll-mt-24 overflow-hidden p-5 sm:p-7")}>
+          className={cn(card, "relative flex flex-1 flex-col scroll-mt-24 overflow-hidden p-5 sm:p-7")}>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-white/80">
               <MapPin aria-hidden="true" className="size-4 shrink-0" />
@@ -620,7 +620,7 @@ export function WeatherDashboard({ data, units, search, onScene }: {
             )}
           </div>
 
-          <div key={viewKey} className="mt-6 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-1 duration-300 sm:mt-8">
+          <div key={viewKey} className="flex flex-1 flex-col items-center justify-center py-8 text-center animate-in fade-in slide-in-from-bottom-1 duration-300">
             <p className={cn("mb-3 rounded-full px-3 py-1 text-xs font-medium tracking-wide",
               view.heading ? "bg-sky-400/15 text-sky-100" : "invisible")}>
               {view.heading ? <>{view.forecast ? t("now.forecast") : ""}{view.heading}</> : t("now.badge")}
