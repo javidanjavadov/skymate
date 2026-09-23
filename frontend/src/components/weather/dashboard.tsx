@@ -188,8 +188,8 @@ export function SavedCities({ current, onSelect }: { current: Saved | null; onSe
     <div className="mt-2 flex flex-wrap items-center gap-2">
       {current && (
         <button type="button" onClick={toggle} aria-pressed={isSaved}
-          className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
-            isSaved ? "border-amber-300/40 bg-amber-300/15 text-amber-100" : "border-white/15 bg-slate-950/30 text-white/80 hover:bg-white/10")}>
+          className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
+            isSaved ? "border-amber-200/60 bg-amber-300/25 text-amber-50" : "border-white/20 bg-slate-950/70 text-white hover:bg-slate-950/85")}>
           <Star aria-hidden="true" className={cn("size-4", isSaved && "fill-amber-200 text-amber-200")} />
           {isSaved ? t("saved.saved") : t("saved.save")}
         </button>
@@ -198,8 +198,8 @@ export function SavedCities({ current, onSelect }: { current: Saved | null; onSe
         const active = current ? sameSpot(place, current) : false
         return (
           <button key={`${place.name}-${place.lat}`} type="button" onClick={() => onSelect(place)} aria-current={active || undefined}
-            className={cn("rounded-full border px-3 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
-              active ? "border-white/25 bg-white/15 text-white" : "border-white/10 bg-slate-950/30 text-white/75 hover:bg-white/10")}>
+            className={cn("rounded-full border px-3 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky-300",
+              active ? "border-white bg-white text-slate-900" : "border-white/20 bg-slate-950/70 text-white hover:bg-slate-950/85")}>
             <span translate="no">{place.name}</span>
           </button>
         )
