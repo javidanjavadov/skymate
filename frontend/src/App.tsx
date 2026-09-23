@@ -201,6 +201,7 @@ function Home({ units, paused, setCondition, setSkyActive, bot, stars }: {
       <SearchBar busy={busy} onSelect={(p) => setQuery({ lat: p.lat, lon: p.lon, label: p.name })} onLocate={() => locate(false)} />
       <SavedCities
         current={data ? { name: data.location.name, country: data.location.country, lat: data.location.lat, lon: data.location.lon } : null}
+        units={units}
         onSelect={(p) => setQuery({ lat: p.lat, lon: p.lon, label: p.name })}
       />
       <p ref={errorRef} tabIndex={-1} role="alert" aria-live="polite"

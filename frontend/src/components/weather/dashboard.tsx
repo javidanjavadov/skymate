@@ -14,8 +14,8 @@ import { getLanguage, localeOf, translate, useT } from "@/lib/i18n"
 import { isSaved, removeSaved, samePlace, toggleSaved, useSavedPlaces, type Saved } from "@/lib/saved-places"
 import { cn } from "@/lib/utils"
 import {
-  alertName, compass, countryName, daySummary, feelsNote, fmt, searchPlaces, summary, title, uvCategory,
-  type Dashboard as Data, type Hour, type Place, type Units,
+  alertName, compass, countryName, daySummary, feelsNote, fetchBrief, fmt, searchPlaces, summary, title, uvCategory,
+  type Brief, type Dashboard as Data, type Hour, type Place, type Units,
 } from "@/lib/weather"
 
 // Two equal columns that end on the same line; the sky shows between the cards.
@@ -155,33 +155,54 @@ export function SearchBar({ onSelect, onLocate, busy }: {
   )
 }
 
-/** The places the visitor saved, as a row of tabs. Empty until they save the first one. */
-export function SavedCities({ current, onSelect }: { current: Saved | null; onSelect: (place: Saved) => void }) {
+/** Saved places as small cards: name, current temperature and sky, so they can be compared at a glance. */
+export function SavedCities({ current, units, onSelect }: {
+  current: Saved | null
+  units: Units
+  onSelect: (place: Saved) => void
+}) {
   const { t } = useT()
   const saved = useSavedPlaces()
+  const [brief, setBrief] = useState<Record<string, Brief>>({})
+
+  const points = saved.map((p) => `${p.lat.toFixed(3)},${p.lon.toFixed(3)}`).join(";")
+  useEffect(() => {
+    if (!points) return
+    const ctrl = new AbortController()
+    fetchBrief(points, ctrl.signal)
+      .then((list) => setBrief(Object.fromEntries(list.map((b) => [`${b.lat.toFixed(3)},${b.lon.toFixed(3)}`, b]))))
+      .catch(() => { /* the cards simply show no temperature */ })
+    return () => ctrl.abort()
+  }, [points])
+
   if (!saved.length) return null
   return (
-    <nav aria-label={t("saved.title")}
-      className="scroll-row mt-2 flex items-center gap-1 overflow-x-auto rounded-2xl border border-white/12 bg-slate-950/60 p-1">
+    <section aria-label={t("saved.title")} className="scroll-row mt-2 flex gap-2 overflow-x-auto pb-1">
       {saved.map((place) => {
         const active = !!current && samePlace(place, current)
+        const now = brief[`${place.lat.toFixed(3)},${place.lon.toFixed(3)}`]
         return (
-          <span key={`${place.name}-${place.lat}`}
-            className={cn("group inline-flex shrink-0 items-center rounded-xl transition-colors",
-              active ? "bg-white text-slate-900" : "text-white/85 hover:bg-white/10")}>
+          <div key={`${place.name}-${place.lat}`}
+            className={cn("group relative flex w-[8.5rem] shrink-0 items-center gap-2 rounded-2xl border px-3 py-2 transition-colors",
+              active ? "border-sky-300/70 bg-sky-400/15" : "border-white/12 bg-slate-950/60 hover:bg-slate-950/75")}>
             <button type="button" onClick={() => onSelect(place)} aria-current={active || undefined}
-              className="rounded-xl py-1.5 pl-3 pr-1.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-sky-300">
-              <span translate="no">{place.name}</span>
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-sky-300">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-medium text-white" translate="no">{place.name}</span>
+                <span className="block text-lg font-semibold tabular-nums text-white">
+                  {now?.temperature != null ? fmt.temp(now.temperature, units) : "…"}
+                </span>
+              </span>
+              {now?.condition && <WeatherIcon condition={now.condition} isDay={now.is_day} className="size-7 shrink-0" />}
             </button>
             <button type="button" onClick={() => removeSaved(place)} aria-label={t("saved.remove", { name: place.name })}
-              className={cn("mr-1 rounded-lg p-1 outline-none focus-visible:ring-2 focus-visible:ring-sky-300",
-                active ? "text-slate-500 hover:bg-slate-900/10 hover:text-slate-900" : "text-white/45 hover:bg-white/10 hover:text-white")}>
+              className="absolute right-1 top-1 rounded-lg p-1 text-white/0 outline-none transition-colors hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:text-white group-hover:text-white/50">
               <X aria-hidden="true" className="size-3.5" />
             </button>
-          </span>
+          </div>
         )
       })}
-    </nav>
+    </section>
   )
 }
 

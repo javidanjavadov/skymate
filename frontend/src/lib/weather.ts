@@ -100,6 +100,15 @@ export async function fetchDashboard(query: { q?: string; lat?: number; lon?: nu
 
 export interface Place { name: string; country: string; lat: number; lon: number }
 
+/** Just enough for a saved-place card. */
+export interface Brief { lat: number; lon: number; temperature: number | null; condition: Condition | null; is_day: boolean }
+
+export async function fetchBrief(points: string, signal?: AbortSignal): Promise<Brief[]> {
+  const res = await fetch(`/site/api/brief?${new URLSearchParams({ points })}`, { signal })
+  if (!res.ok) return []
+  return ((await res.json()) as { places: Brief[] }).places
+}
+
 export async function searchPlaces(q: string, signal: AbortSignal): Promise<Place[]> {
   const res = await fetch(`/site/api/places?${new URLSearchParams({ q })}`, { signal })
   if (!res.ok) return []

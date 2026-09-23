@@ -347,3 +347,31 @@ async def site_places(request: Request, q: str = Query(..., min_length=1, max_le
         return JSONResponse({"error": "Too many searches. Wait a minute, then try again."}, status_code=429)
     places = await run_in_threadpool(geo.suggest, q, 6)
     return {"places": [{"name": p["name"], "country": p["country"], "lat": p["lat"], "lon": p["lon"]} for p in places]}
+
+
+@router.get("/site/api/brief")
+async def site_brief(request: Request, points: str = Query(..., min_length=3, max_length=200)):
+    """Just the current temperature and sky for a few saved places: "lat,lon;lat,lon" (at most 8)."""
+    if not places_limiter.allow(security.client_ip(request)):
+        return JSONResponse({"error": "Too many requests. Wait a minute, then try again."}, status_code=429)
+    wanted = []
+    for pair in points.split(";")[:8]:
+        try:
+            lat, lon = (float(v) for v in pair.split(",", 1))
+        except ValueError:
+            continue
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            wanted.append((lat, lon))
+
+    def brief(lat: float, lon: float) -> dict:
+        try:
+            loc = forecast.resolve_location(None, lat, lon)
+            cur = forecast.current(loc)
+            c, obs = cur["current"] or {}, cur.get("observed")
+            temperature = (obs or {}).get("temperature") if (obs or {}).get("temperature") is not None else c.get("temperature")
+            return {"lat": lat, "lon": lon, "temperature": temperature, "condition": c.get("condition", "Clouds"),
+                    "is_day": bool(c.get("is_day", True))}
+        except (forecast.NotFound, forecast.NoData):
+            return {"lat": lat, "lon": lon, "temperature": None, "condition": None, "is_day": True}
+
+    return {"places": await run_in_threadpool(lambda: [brief(lat, lon) for lat, lon in wanted])}
